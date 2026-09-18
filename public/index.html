@@ -46,14 +46,39 @@
       <section class="summary-row">
         <div>
           <strong id="albumCount">0 Alben</strong>
-          <span class="summary-note">Alle Treffer werden in einer scrollbaren Liste angezeigt.</span>
+          <span class="summary-note">Quellen und Ziel für Merge direkt in der Liste markieren.</span>
         </div>
         <span id="connectionState" class="connection-state">Verbinden …</span>
+      </section>
+
+      <section id="mergeBar" class="merge-bar" hidden aria-label="Merge-Auswahl">
+        <div class="merge-bar-main">
+          <span class="merge-arrow" aria-hidden="true">⇢</span>
+          <div class="merge-stat">
+            <span class="merge-label">Quellen</span>
+            <strong id="mergeSourceCount">0 Quellen</strong>
+            <span id="mergeAssetCount" class="merge-detail">0 Assets</span>
+          </div>
+          <span class="merge-flow" aria-hidden="true">→</span>
+          <div class="merge-stat target-stat">
+            <span class="merge-label">Zielalbum</span>
+            <strong id="mergeTargetName" class="missing">Ziel noch wählen</strong>
+          </div>
+        </div>
+        <div class="merge-bar-actions">
+          <button id="mergeClearButton" class="secondary-button" type="button">Auswahl löschen</button>
+          <button id="mergeRunButton" class="primary-button" type="button" disabled>Merge starten</button>
+        </div>
       </section>
 
       <section class="table-shell" aria-live="polite">
         <div class="table-scroll">
           <div class="table-header album-grid">
+            <label class="header-source" title="Alle sichtbaren Alben als Quelle markieren">
+              <input id="selectAllSources" type="checkbox" aria-label="Alle sichtbaren Alben als Merge-Quelle auswählen" />
+              <span>Quelle</span>
+            </label>
+            <span class="target-header">Ziel</span>
             <span class="thumb-col"></span>
             <span>Album</span>
             <span>Assets</span>

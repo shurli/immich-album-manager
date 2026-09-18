@@ -4,6 +4,9 @@ const state = {
   scope: 'all',
   sort: 'name-asc',
   busy: new Set(),
+  mergeSources: new Set(),
+  mergeTarget: null,
+  merging: false,
 };
 
 const elements = {
@@ -16,6 +19,13 @@ const elements = {
   sort: document.querySelector('#sortSelect'),
   refresh: document.querySelector('#refreshButton'),
   toasts: document.querySelector('#toastStack'),
+  selectAllSources: document.querySelector('#selectAllSources'),
+  mergeBar: document.querySelector('#mergeBar'),
+  mergeSourceCount: document.querySelector('#mergeSourceCount'),
+  mergeAssetCount: document.querySelector('#mergeAssetCount'),
+  mergeTargetName: document.querySelector('#mergeTargetName'),
+  mergeRun: document.querySelector('#mergeRunButton'),
+  mergeClear: document.querySelector('#mergeClearButton'),
 };
 
 const actionHeaders = { 'content-type': 'application/json', 'x-album-manager-action': '1' };
@@ -48,6 +58,9 @@ function bindControls() {
   });
 
   elements.refresh.addEventListener('click', loadAlbums);
+  elements.selectAllSources.addEventListener('change', toggleAllVisibleSources);
+  elements.mergeClear.addEventListener('click', clearMergeSelection);
+  elements.mergeRun.addEventListener('click', runMultiMerge);
 }
 
 async function loadAlbums() {
@@ -57,6 +70,7 @@ async function loadAlbums() {
   try {
     const albums = await api(`/api/albums?scope=${encodeURIComponent(state.scope)}`);
     state.albums = albums;
+    reconcileMergeSelection();
     elements.connection.textContent = 'Verbunden';
     elements.connection.className = 'connection-state ok';
     render();
@@ -69,10 +83,20 @@ async function loadAlbums() {
   }
 }
 
+function reconcileMergeSelection() {
+  const ids = new Set(state.albums.map((album) => album.id));
+  for (const id of state.mergeSources) {
+    if (!ids.has(id)) state.mergeSources.delete(id);
+  }
+  if (state.mergeTarget && !ids.has(state.mergeTarget)) state.mergeTarget = null;
+  if (state.mergeTarget) state.mergeSources.delete(state.mergeTarget);
+}
+
 function render() {
   const albums = filteredAlbums();
   elements.count.textContent = `${albums.length} ${albums.length === 1 ? 'Album' : 'Alben'}`;
   elements.empty.hidden = albums.length !== 0;
+  updateMergeUi(albums);
   elements.rows.replaceChildren(...albums.map(renderAlbumRow));
 }
 
@@ -99,11 +123,61 @@ function filteredAlbums() {
   });
 }
 
+function updateMergeUi(visibleAlbums) {
+  const sources = state.albums.filter((album) => state.mergeSources.has(album.id));
+  const target = state.albums.find((album) => album.id === state.mergeTarget) || null;
+  const assetTotal = sources.reduce((sum, album) => sum + Number(album.assetCount || 0), 0);
+  const hasSelection = sources.length > 0 || Boolean(target);
+
+  elements.mergeBar.hidden = !hasSelection;
+  elements.mergeSourceCount.textContent = `${sources.length} ${sources.length === 1 ? 'Quelle' : 'Quellen'}`;
+  elements.mergeAssetCount.textContent = `${numberFormatter.format(assetTotal)} Assets`;
+  elements.mergeTargetName.textContent = target ? target.albumName : 'Ziel noch wählen';
+  elements.mergeTargetName.classList.toggle('missing', !target);
+  elements.mergeRun.disabled = state.merging || sources.length === 0 || !target;
+  elements.mergeRun.textContent = state.merging ? 'Merge läuft …' : `Merge starten`;
+  elements.mergeClear.disabled = state.merging;
+
+  const selectableVisible = visibleAlbums.filter((album) => album.id !== state.mergeTarget);
+  const selectedVisible = selectableVisible.filter((album) => state.mergeSources.has(album.id));
+  elements.selectAllSources.disabled = state.merging || selectableVisible.length === 0;
+  elements.selectAllSources.checked = selectableVisible.length > 0 && selectedVisible.length === selectableVisible.length;
+  elements.selectAllSources.indeterminate = selectedVisible.length > 0 && selectedVisible.length < selectableVisible.length;
+}
+
 function renderAlbumRow(album) {
   const row = document.createElement('article');
   row.className = 'album-row album-grid';
   row.dataset.id = album.id;
   if (state.busy.has(album.id)) row.classList.add('busy');
+  if (state.mergeSources.has(album.id)) row.classList.add('merge-source-row');
+  if (state.mergeTarget === album.id) row.classList.add('merge-target-row');
+
+  const sourceCell = document.createElement('label');
+  sourceCell.className = 'selection-cell source-cell';
+  sourceCell.title = 'Als Quellalbum für Merge markieren';
+  const sourceCheck = document.createElement('input');
+  sourceCheck.type = 'checkbox';
+  sourceCheck.className = 'source-check';
+  sourceCheck.checked = state.mergeSources.has(album.id);
+  sourceCheck.disabled = state.merging;
+  sourceCheck.setAttribute('aria-label', `${album.albumName} als Merge-Quelle auswählen`);
+  sourceCheck.addEventListener('change', () => toggleSource(album.id, sourceCheck.checked));
+  sourceCell.append(sourceCheck);
+
+  const targetCell = document.createElement('div');
+  targetCell.className = 'selection-cell';
+  const targetButton = document.createElement('button');
+  targetButton.type = 'button';
+  targetButton.className = 'target-selector';
+  targetButton.classList.toggle('selected', state.mergeTarget === album.id);
+  targetButton.disabled = state.merging;
+  targetButton.setAttribute('aria-pressed', state.mergeTarget === album.id ? 'true' : 'false');
+  targetButton.setAttribute('aria-label', `${album.albumName} als Merge-Ziel auswählen`);
+  targetButton.title = state.mergeTarget === album.id ? 'Zielauswahl aufheben' : 'Als Zielalbum wählen';
+  targetButton.textContent = state.mergeTarget === album.id ? '●' : '○';
+  targetButton.addEventListener('click', () => toggleTarget(album.id));
+  targetCell.append(targetButton);
 
   const thumb = makeThumbnail(album.albumThumbnailAssetId, 'album-thumb');
 
@@ -114,6 +188,7 @@ function renderAlbumRow(album) {
   input.value = album.albumName;
   input.setAttribute('aria-label', `Album ${album.albumName} umbenennen`);
   input.title = 'Direkt bearbeiten; Enter oder Fokusverlust speichert';
+  input.disabled = state.merging;
   input.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') input.blur();
     if (event.key === 'Escape') {
@@ -149,37 +224,57 @@ function renderAlbumRow(album) {
 
   const actions = document.createElement('div');
   actions.className = 'row-actions';
-
-  const mergeWrap = document.createElement('div');
-  mergeWrap.className = 'merge-control';
-  const select = document.createElement('select');
-  select.className = 'merge-select';
-  select.setAttribute('aria-label', `${album.albumName} in anderes Album mergen`);
-  select.append(new Option('Merge in …', ''));
-  for (const target of state.albums
-    .filter((candidate) => candidate.id !== album.id)
-    .sort((a, b) => a.albumName.localeCompare(b.albumName, 'de', { numeric: true, sensitivity: 'base' }))) {
-    select.append(new Option(`${target.albumName} (${target.assetCount})`, target.id));
-  }
-  const mergeButton = document.createElement('button');
-  mergeButton.className = 'action-button merge-button';
-  mergeButton.textContent = '⇢';
-  mergeButton.title = 'Quelle in Zielalbum mergen und Quellalbum löschen';
-  mergeButton.disabled = true;
-  select.addEventListener('change', () => { mergeButton.disabled = !select.value; });
-  mergeButton.addEventListener('click', () => mergeAlbum(album, select.value));
-  mergeWrap.append(select, mergeButton);
-
   const deleteButton = document.createElement('button');
   deleteButton.className = 'action-button danger';
   deleteButton.textContent = '×';
   deleteButton.title = 'Album sofort löschen – ohne Rückfrage';
   deleteButton.setAttribute('aria-label', `${album.albumName} sofort löschen`);
+  deleteButton.disabled = state.merging;
   deleteButton.addEventListener('click', () => deleteAlbum(album));
+  actions.append(deleteButton);
 
-  actions.append(mergeWrap, deleteButton);
-  row.append(thumb, nameCell, count, newest, oldest, sharing, actions);
+  row.append(sourceCell, targetCell, thumb, nameCell, count, newest, oldest, sharing, actions);
   return row;
+}
+
+function toggleSource(id, checked) {
+  if (state.merging) return;
+  if (checked) {
+    state.mergeSources.add(id);
+    if (state.mergeTarget === id) state.mergeTarget = null;
+  } else {
+    state.mergeSources.delete(id);
+  }
+  render();
+}
+
+function toggleTarget(id) {
+  if (state.merging) return;
+  if (state.mergeTarget === id) {
+    state.mergeTarget = null;
+  } else {
+    state.mergeTarget = id;
+    state.mergeSources.delete(id);
+  }
+  render();
+}
+
+function toggleAllVisibleSources() {
+  if (state.merging) return;
+  const visible = filteredAlbums().filter((album) => album.id !== state.mergeTarget);
+  if (elements.selectAllSources.checked) {
+    for (const album of visible) state.mergeSources.add(album.id);
+  } else {
+    for (const album of visible) state.mergeSources.delete(album.id);
+  }
+  render();
+}
+
+function clearMergeSelection() {
+  if (state.merging) return;
+  state.mergeSources.clear();
+  state.mergeTarget = null;
+  render();
 }
 
 function renderItemCell(asset, fallbackDate, emptyLabel) {
@@ -221,7 +316,7 @@ function makeThumbnail(assetId, className) {
 
 async function renameAlbum(album, input) {
   const nextName = input.value.trim();
-  if (!nextName || nextName === album.albumName || state.busy.has(album.id)) {
+  if (!nextName || nextName === album.albumName || state.busy.has(album.id) || state.merging) {
     input.value = album.albumName;
     return;
   }
@@ -245,11 +340,13 @@ async function renameAlbum(album, input) {
 }
 
 async function deleteAlbum(album) {
-  if (state.busy.has(album.id)) return;
+  if (state.busy.has(album.id) || state.merging) return;
   setBusy(album.id, true);
   try {
     await api(`/api/albums/${album.id}`, { method: 'DELETE', headers: { 'x-album-manager-action': '1' } });
     state.albums = state.albums.filter((item) => item.id !== album.id);
+    state.mergeSources.delete(album.id);
+    if (state.mergeTarget === album.id) state.mergeTarget = null;
     showToast(`Gelöscht: ${album.albumName}`, 'success');
   } catch (error) {
     showToast(error.message, 'error', 7000);
@@ -259,27 +356,41 @@ async function deleteAlbum(album) {
   }
 }
 
-async function mergeAlbum(source, targetId) {
-  if (!targetId || state.busy.has(source.id)) return;
+async function runMultiMerge() {
+  if (state.merging || state.mergeSources.size === 0 || !state.mergeTarget) return;
+
+  const sourceIds = [...state.mergeSources];
+  const targetId = state.mergeTarget;
   const target = state.albums.find((album) => album.id === targetId);
   if (!target) return;
 
-  setBusy(source.id, true);
-  setBusy(targetId, true);
-  showToast(`Merge läuft: ${source.albumName} → ${target.albumName}`, 'info', 2500);
+  state.merging = true;
+  for (const id of sourceIds) state.busy.add(id);
+  state.busy.add(targetId);
+  render();
+  showToast(`Merge läuft: ${sourceIds.length} Quelle(n) → ${target.albumName}`, 'info', 3000);
+
   try {
-    const result = await api(`/api/albums/${source.id}/merge`, {
+    const result = await api('/api/merge', {
       method: 'POST',
       headers: actionHeaders,
-      body: JSON.stringify({ targetAlbumId: targetId }),
+      body: JSON.stringify({ sourceAlbumIds: sourceIds, targetAlbumId: targetId }),
     });
-    state.albums = state.albums.filter((album) => album.id !== source.id);
-    showToast(`${source.albumName} → ${target.albumName}: ${result.assetCount} Assets verarbeitet`, 'success', 6000);
+    const sourceLabel = result.sourceCount === 1 ? 'Quellalbum' : 'Quellalben';
+    if (result.cleanupComplete === false) {
+      const failedNames = (result.cleanupFailures || []).map((item) => item.name).join(', ');
+      showToast(`Assets wurden gemergt, aber ${result.cleanupFailures.length} Quellalbum/-alben konnten nicht gelöscht werden: ${failedNames}`, 'error', 10000);
+    } else {
+      showToast(`${result.sourceCount} ${sourceLabel} → ${result.target.name}: ${numberFormatter.format(result.uniqueAssetCount)} eindeutige Assets verarbeitet`, 'success', 7000);
+    }
+    state.mergeSources.clear();
+    state.mergeTarget = null;
     await loadAlbums();
   } catch (error) {
-    showToast(error.message, 'error', 9000);
+    showToast(error.message, 'error', 10000);
   } finally {
-    state.busy.delete(source.id);
+    state.merging = false;
+    for (const id of sourceIds) state.busy.delete(id);
     state.busy.delete(targetId);
     render();
   }

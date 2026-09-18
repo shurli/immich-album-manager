@@ -14,6 +14,7 @@ const APP_PASSWORD = process.env.APP_PASSWORD || '';
 const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS || 30000);
 const MERGE_PAGE_SIZE = clamp(Number(process.env.MERGE_PAGE_SIZE || 1000), 1, 1000);
 const MERGE_CHUNK_SIZE = clamp(Number(process.env.MERGE_CHUNK_SIZE || 1000), 1, 5000);
+const MERGE_SOURCE_CONCURRENCY = clamp(Number(process.env.MERGE_SOURCE_CONCURRENCY || 3), 1, 10);
 const EXTREMA_CONCURRENCY = clamp(Number(process.env.EXTREMA_CONCURRENCY || 6), 1, 20);
 const EXTREMA_CACHE_TTL_MS = clamp(Number(process.env.EXTREMA_CACHE_TTL_MS || 120000), 0, 3600000);
 const extremaCache = new Map();
@@ -118,62 +119,31 @@ app.delete('/api/albums/:id', requireActionHeader, async (req, res, next) => {
   }
 });
 
+app.post('/api/merge', requireActionHeader, async (req, res, next) => {
+  try {
+    const sourceIdsRaw = Array.isArray(req.body?.sourceAlbumIds) ? req.body.sourceAlbumIds : [];
+    if (sourceIdsRaw.length < 1) return res.status(400).json({ error: 'Mindestens ein Quellalbum auswählen.' });
+    if (sourceIdsRaw.length > 500) return res.status(400).json({ error: 'Zu viele Quellalben in einem Merge (maximal 500).' });
+
+    const targetId = requireUuid(req.body?.targetAlbumId, 'target album id');
+    const sourceIds = [...new Set(sourceIdsRaw.map((id) => requireUuid(id, 'source album id')))];
+    if (sourceIds.includes(targetId)) return res.status(400).json({ error: 'Das Zielalbum darf nicht gleichzeitig Quelle sein.' });
+
+    const result = await mergeAlbums(sourceIds, targetId);
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Backward-compatible single-source route for clients from 0.2.x.
 app.post('/api/albums/:sourceId/merge', requireActionHeader, async (req, res, next) => {
   try {
     const sourceId = requireUuid(req.params.sourceId, 'source album id');
     const targetId = requireUuid(req.body?.targetAlbumId, 'target album id');
     if (sourceId === targetId) return res.status(400).json({ error: 'Quelle und Ziel müssen unterschiedliche Alben sein.' });
-
-    const [sourceAlbum, targetAlbum] = await Promise.all([
-      immichJson(`/albums/${sourceId}`),
-      immichJson(`/albums/${targetId}`),
-    ]);
-
-    const assetIds = await getAlbumAssetIds(sourceId);
-    let newlyAdded = 0;
-    let duplicates = 0;
-
-    for (const ids of chunk(assetIds, MERGE_CHUNK_SIZE)) {
-      const result = await immichJson(`/albums/${targetId}/assets`, {
-        method: 'PUT',
-        body: JSON.stringify({ ids }),
-      });
-
-      const failures = [];
-      for (const item of Array.isArray(result) ? result : []) {
-        if (item?.success === true) {
-          newlyAdded += 1;
-          continue;
-        }
-        const reason = String(item?.error || item?.errorCode || '').toLowerCase();
-        if (reason.includes('duplicate')) {
-          duplicates += 1;
-          continue;
-        }
-        failures.push(item);
-      }
-
-      if (failures.length > 0) {
-        const error = new Error(`Merge abgebrochen: ${failures.length} Asset(s) konnten nicht ins Zielalbum übernommen werden.`);
-        error.status = 409;
-        error.details = failures.slice(0, 20);
-        throw error;
-      }
-    }
-
-    // The source is deleted only after every add operation completed without a non-duplicate failure.
-    await immichJson(`/albums/${sourceId}`, { method: 'DELETE' });
-    extremaCache.delete(sourceId);
-    extremaCache.delete(targetId);
-
-    res.json({
-      ok: true,
-      source: { id: sourceId, name: sourceAlbum?.albumName || sourceId },
-      target: { id: targetId, name: targetAlbum?.albumName || targetId },
-      assetCount: assetIds.length,
-      newlyAdded,
-      alreadyPresent: Math.max(duplicates, assetIds.length - newlyAdded),
-    });
+    const result = await mergeAlbums([sourceId], targetId);
+    res.json(result);
   } catch (error) {
     next(error);
   }
@@ -341,6 +311,90 @@ async function getAlbumExtremeAsset(albumId, order) {
   const container = data?.assets || data || {};
   const items = Array.isArray(container.items) ? container.items : Array.isArray(data?.items) ? data.items : [];
   return items[0] ? toAssetSummary(items[0]) : null;
+}
+
+async function mergeAlbums(sourceIds, targetId) {
+  const [targetAlbum, sourceAlbums] = await Promise.all([
+    immichJson(`/albums/${targetId}`),
+    mapConcurrent(sourceIds, MERGE_SOURCE_CONCURRENCY, (sourceId) => immichJson(`/albums/${sourceId}`)),
+  ]);
+
+  const assetsBySource = await mapConcurrent(sourceIds, MERGE_SOURCE_CONCURRENCY, async (sourceId) => ({
+    sourceId,
+    assetIds: await getAlbumAssetIds(sourceId),
+  }));
+
+  const uniqueAssetIds = [];
+  const seen = new Set();
+  for (const source of assetsBySource) {
+    for (const assetId of source.assetIds) {
+      if (seen.has(assetId)) continue;
+      seen.add(assetId);
+      uniqueAssetIds.push(assetId);
+    }
+  }
+
+  let newlyAdded = 0;
+  let duplicates = 0;
+  for (const ids of chunk(uniqueAssetIds, MERGE_CHUNK_SIZE)) {
+    const result = await immichJson(`/albums/${targetId}/assets`, {
+      method: 'PUT',
+      body: JSON.stringify({ ids }),
+    });
+
+    const failures = [];
+    for (const item of Array.isArray(result) ? result : []) {
+      if (item?.success === true) {
+        newlyAdded += 1;
+        continue;
+      }
+      const reason = String(item?.error || item?.errorCode || '').toLowerCase();
+      if (reason.includes('duplicate')) {
+        duplicates += 1;
+        continue;
+      }
+      failures.push(item);
+    }
+
+    if (failures.length > 0) {
+      const error = new Error(`Merge abgebrochen: ${failures.length} Asset(s) konnten nicht ins Zielalbum übernommen werden. Kein Quellalbum wurde gelöscht.`);
+      error.status = 409;
+      error.details = failures.slice(0, 20);
+      throw error;
+    }
+  }
+
+  // Important: do not start deleting sources until every asset batch for every source succeeded.
+  // Cleanup is attempted for every source; individual delete failures are reported to the UI.
+  const deleteResults = await Promise.allSettled(sourceIds.map(async (sourceId) => {
+    await immichJson(`/albums/${sourceId}`, { method: 'DELETE' });
+    extremaCache.delete(sourceId);
+    return sourceId;
+  }));
+  extremaCache.delete(targetId);
+
+  const cleanupFailures = deleteResults
+    .map((result, index) => ({ result, id: sourceIds[index], name: sourceAlbums[index]?.albumName || sourceIds[index] }))
+    .filter(({ result }) => result.status === 'rejected')
+    .map(({ result, id, name }) => ({ id, name, error: result.reason?.message || 'Löschen fehlgeschlagen' }));
+
+  return {
+    ok: cleanupFailures.length === 0,
+    cleanupComplete: cleanupFailures.length === 0,
+    cleanupFailures,
+    sourceCount: sourceIds.length,
+    sources: sourceIds.map((id, index) => ({
+      id,
+      name: sourceAlbums[index]?.albumName || id,
+      assetCount: assetsBySource[index]?.assetIds?.length || 0,
+    })),
+    target: { id: targetId, name: targetAlbum?.albumName || targetId },
+    uniqueAssetCount: uniqueAssetIds.length,
+    sourceAssetCount: assetsBySource.reduce((sum, source) => sum + source.assetIds.length, 0),
+    newlyAdded,
+    alreadyPresent: Math.max(duplicates, uniqueAssetIds.length - newlyAdded),
+    deletedSourceCount: sourceIds.length - cleanupFailures.length,
+  };
 }
 
 async function getAlbumAssetIds(albumId) {

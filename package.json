@@ -1,9 +1,9 @@
 {
   "name": "immich-album-manager",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
-  "description": "Fast no-pagination album list management UI for Immich",
+  "description": "No-pagination Immich album manager with multi-select merge workflow",
   "scripts": {
     "start": "node server.mjs",
     "check": "node --check server.mjs && node --check public/app.js"
