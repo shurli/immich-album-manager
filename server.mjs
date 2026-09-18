@@ -12,8 +12,11 @@ const IMMICH_API_KEY = process.env.IMMICH_API_KEY || '';
 const APP_USERNAME = process.env.APP_USERNAME || '';
 const APP_PASSWORD = process.env.APP_PASSWORD || '';
 const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS || 30000);
-const MERGE_PAGE_SIZE = Math.min(Math.max(Number(process.env.MERGE_PAGE_SIZE || 1000), 1), 1000);
-const MERGE_CHUNK_SIZE = Math.min(Math.max(Number(process.env.MERGE_CHUNK_SIZE || 1000), 1), 5000);
+const MERGE_PAGE_SIZE = clamp(Number(process.env.MERGE_PAGE_SIZE || 1000), 1, 1000);
+const MERGE_CHUNK_SIZE = clamp(Number(process.env.MERGE_CHUNK_SIZE || 1000), 1, 5000);
+const EXTREMA_CONCURRENCY = clamp(Number(process.env.EXTREMA_CONCURRENCY || 6), 1, 20);
+const EXTREMA_CACHE_TTL_MS = clamp(Number(process.env.EXTREMA_CACHE_TTL_MS || 120000), 0, 3600000);
+const extremaCache = new Map();
 
 if (!IMMICH_API_KEY) {
   console.warn('[config] IMMICH_API_KEY is empty. API calls will fail until it is configured.');
@@ -50,7 +53,21 @@ app.get('/api/albums', async (req, res, next) => {
 
     const suffix = params.size ? `?${params}` : '';
     const albums = await immichJson(`/albums${suffix}`);
-    res.json((Array.isArray(albums) ? albums : []).map(toAlbumSummary));
+    const summaries = (Array.isArray(albums) ? albums : []).map(toAlbumSummary);
+
+    // No UI pagination: enrich every album, but cap concurrency so larger libraries do not hammer Immich.
+    const enriched = await mapConcurrent(summaries, EXTREMA_CONCURRENCY, async (album) => {
+      if (!album.id || album.assetCount < 1) return album;
+      try {
+        const extremes = await getAlbumExtremes(album.id);
+        return { ...album, ...extremes };
+      } catch (error) {
+        console.warn(`[extrema] ${album.id}: ${error.message}`);
+        return album;
+      }
+    });
+
+    res.json(enriched);
   } catch (error) {
     next(error);
   }
@@ -94,6 +111,7 @@ app.delete('/api/albums/:id', requireActionHeader, async (req, res, next) => {
   try {
     const id = requireUuid(req.params.id, 'album id');
     await immichJson(`/albums/${id}`, { method: 'DELETE' });
+    extremaCache.delete(id);
     res.status(204).end();
   } catch (error) {
     next(error);
@@ -145,6 +163,8 @@ app.post('/api/albums/:sourceId/merge', requireActionHeader, async (req, res, ne
 
     // The source is deleted only after every add operation completed without a non-duplicate failure.
     await immichJson(`/albums/${sourceId}`, { method: 'DELETE' });
+    extremaCache.delete(sourceId);
+    extremaCache.delete(targetId);
 
     res.json({
       ok: true,
@@ -166,9 +186,7 @@ app.get('/', (_req, res) => {
 app.use((error, _req, res, _next) => {
   const status = Number(error?.status || error?.statusCode || 500);
   const safeStatus = status >= 400 && status < 600 ? status : 500;
-  const payload = {
-    error: error?.message || 'Unbekannter Fehler',
-  };
+  const payload = { error: error?.message || 'Unbekannter Fehler' };
   if (error?.details) payload.details = error.details;
   if (process.env.NODE_ENV !== 'production' && error?.stack) payload.stack = error.stack;
   console.error('[request]', error);
@@ -291,6 +309,40 @@ async function immichJson(apiPath, init = {}) {
   return text ? JSON.parse(text) : null;
 }
 
+async function getAlbumExtremes(albumId) {
+  const cached = extremaCache.get(albumId);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+
+  const [newestAsset, oldestAsset] = await Promise.all([
+    getAlbumExtremeAsset(albumId, 'desc'),
+    getAlbumExtremeAsset(albumId, 'asc'),
+  ]);
+  const value = { newestAsset, oldestAsset };
+  if (EXTREMA_CACHE_TTL_MS > 0) {
+    extremaCache.set(albumId, { value, expiresAt: Date.now() + EXTREMA_CACHE_TTL_MS });
+  }
+  return value;
+}
+
+async function getAlbumExtremeAsset(albumId, order) {
+  const data = await immichJson('/search/metadata', {
+    method: 'POST',
+    body: JSON.stringify({
+      albumIds: [albumId],
+      page: 1,
+      size: 1,
+      order,
+      withExif: false,
+      withPeople: false,
+      withStacked: false,
+    }),
+  });
+
+  const container = data?.assets || data || {};
+  const items = Array.isArray(container.items) ? container.items : Array.isArray(data?.items) ? data.items : [];
+  return items[0] ? toAssetSummary(items[0]) : null;
+}
+
 async function getAlbumAssetIds(albumId) {
   const ids = [];
   const seen = new Set();
@@ -316,7 +368,6 @@ async function getAlbumAssetIds(albumId) {
         seen.add(item.id);
         ids.push(item.id);
       }
-      // Some Immich responses expose stacked children nested under the parent.
       for (const child of item?.stack?.assets || []) {
         if (child?.id && !seen.has(child.id)) {
           seen.add(child.id);
@@ -356,6 +407,8 @@ function toAlbumSummary(album = {}) {
     updatedAt: album.updatedAt || null,
     startDate: album.startDate || null,
     endDate: album.endDate || null,
+    newestAsset: null,
+    oldestAsset: null,
     isActivityEnabled: album.isActivityEnabled ?? null,
     role: ownMembership?.role || null,
     ownerName: ownerEntry?.user?.name || ownerEntry?.user?.email || '',
@@ -364,8 +417,37 @@ function toAlbumSummary(album = {}) {
   };
 }
 
+function toAssetSummary(asset = {}) {
+  return {
+    id: asset.id || null,
+    // Legacy metadata search is ordered by fileCreatedAt, so expose that timestamp first.
+    date: asset.fileCreatedAt || asset.localDateTime || asset.createdAt || null,
+    fileName: asset.originalFileName || '',
+    type: asset.type || null,
+  };
+}
+
 function chunk(items, size) {
   const chunks = [];
   for (let i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size));
   return chunks;
+}
+
+async function mapConcurrent(items, concurrency, mapper) {
+  const output = new Array(items.length);
+  let cursor = 0;
+  async function worker() {
+    while (true) {
+      const index = cursor++;
+      if (index >= items.length) return;
+      output[index] = await mapper(items[index], index);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => worker()));
+  return output;
+}
+
+function clamp(value, min, max) {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(Math.max(Math.trunc(value), min), max);
 }

@@ -1,14 +1,22 @@
-# Immich Album Manager
+# Immich Album Manager 0.2.0
 
-Kleine Docker-Webapp für schnelle Albumverwaltung in einer Listenansicht, angelehnt an die Immich-Albumübersicht.
+Kleine Docker-Webapp für schnelle Albumverwaltung in einer dichten Listenansicht, angelehnt an die Immich-Albumübersicht.
+
+## Neu in 0.2.0
+
+- **Keine Pagination:** alle Alben / Treffer stehen in einer einzigen scrollbaren Liste.
+- **Neuestes Item:** eigenes Thumbnail, Dateiname und exakter Zeitstempel des neuesten Assets im Album.
+- **Ältestes Item:** eigenes Thumbnail, Dateiname und exakter Zeitstempel des ältesten Assets im Album.
+- Sortierung nach neuestem oder ältestem Item in beide Richtungen.
+- Die Rand-Items werden parallel mit begrenzter Concurrency geladen und kurz gecacht, damit größere Bibliotheken Immich nicht unnötig belasten.
 
 ## Funktionen
 
-- Albumliste mit Thumbnail, Asset-Anzahl, Zeitraum und Freigabestatus
+- Albumliste mit Thumbnail, Asset-Anzahl, neuestem/ältestem Item und Freigabestatus
 - Suche, Scope-Filter und Sortierung
 - **Inline umbenennen:** Albumname direkt in der Liste bearbeiten; Enter oder Fokusverlust speichert
 - **Direkt löschen:** ein Klick auf `×` löscht das Album **ohne Rückfrage**
-- **Merge:** Quellalbum auswählen, Zielalbum setzen und mergen; alle Assets werden ins Zielalbum übernommen, danach wird das Quellalbum gelöscht
+- **Merge:** Quelle in Zielalbum übernehmen; alle Assets werden ins Ziel übernommen, danach wird das Quellalbum gelöscht
 - API-Key bleibt serverseitig und wird nicht an den Browser ausgeliefert
 - Optionaler HTTP-Basic-Auth für die Management-Oberfläche
 
@@ -16,21 +24,23 @@ Kleine Docker-Webapp für schnelle Albumverwaltung in einer Listenansicht, angel
 
 ## Immich-Kompatibilität
 
-Gebaut gegen die aktuelle Immich-v3-API (Stand v3.2.x). Seit v3 liefert `GET /albums/:id` keine Assetliste mehr. Der Merge holt die Asset-IDs deshalb paginiert über `POST /search/metadata` und fügt sie in Batches mit `PUT /albums/:id/assets` ins Zielalbum ein.
+Gebaut gegen die Immich-v3-API, geprüft gegen den Stand von v3.2.x. Seit v3 liefert `GET /albums/:id` keine Assetliste mehr. Der Merge holt die Asset-IDs deshalb paginiert über `POST /search/metadata`.
 
-Der Merge ist fehlertolerant gegenüber Assets, die bereits im Zielalbum vorhanden sind. Das Quellalbum wird **erst** gelöscht, nachdem alle Add-Batches ohne nicht-duplicate Fehler abgeschlossen wurden. Bei einem Teilfehler bleibt das Quellalbum erhalten; bereits hinzugefügte Assets im Ziel sind unkritisch und ein erneuter Merge ist idempotent.
+Für **Neuestes Item** und **Ältestes Item** wird je Album die Search-API mit `size: 1` und `order: desc/asc` verwendet. Das ist absichtlich genauer als nur `startDate`/`endDate` aus der Albumantwort: diese Albumfelder werden serverseitig aktuell auf Tagesebene aggregiert und verlieren dadurch die Uhrzeit. Falls eine Rand-Item-Abfrage fehlschlägt, zeigt die UI `startDate`/`endDate` als Fallback.
+
+Der Merge ist fehlertolerant gegenüber Assets, die bereits im Zielalbum vorhanden sind. Das Quellalbum wird **erst** gelöscht, nachdem alle Add-Batches ohne nicht-duplicate Fehler abgeschlossen wurden.
 
 ## Benötigte API-Key-Rechte
 
-Für alle Funktionen sollte der Immich API Key mindestens diese Berechtigungen haben (Bezeichnungen können je nach Immich-Version leicht variieren):
+Für alle Funktionen sollte der Immich API Key mindestens passende Rechte für folgende Operationen besitzen:
 
 - Album lesen
 - Album ändern / update
 - Album löschen
-- Assets zu Album hinzufügen (`album.asset.create`)
+- Assets zu Album hinzufügen
 - Assets lesen / suchen
-- Assets teilen (`asset.share`) – wird von Immich beim Hinzufügen zu einem Album geprüft
-- Asset-Thumbnail ansehen (`asset.view`) für Vorschaubilder
+- Assets teilen, soweit von Immich beim Hinzufügen zu einem Album verlangt
+- Asset-Thumbnail ansehen
 
 ## Start
 
@@ -58,11 +68,22 @@ IMMICH_URL=http://host.docker.internal:2283
 
 `docker-compose.yml` enthält dafür unter Linux bereits `host-gateway`.
 
+## Performance der neuesten/ältesten Items
+
+Da Immich die exakten Rand-Assets nicht in `GET /albums` mitsendet, sind dafür zusätzliche Search-Requests nötig. Zwei Parameter steuern das Verhalten:
+
+```env
+EXTREMA_CONCURRENCY=6
+EXTREMA_CACHE_TTL_MS=120000
+```
+
+`EXTREMA_CONCURRENCY` begrenzt die gleichzeitig laufenden Album-Abfragen. `EXTREMA_CACHE_TTL_MS` hält die Ergebnisse standardmäßig zwei Minuten im Backend-Cache. Nach Merge oder Delete werden die betroffenen Cache-Einträge verworfen.
+
 ## Sicherheit
 
 Diese App besitzt absichtlich sehr direkte Verwaltungsaktionen. Wenn Port 3473 nicht ausschließlich lokal erreichbar ist, `APP_USERNAME` und `APP_PASSWORD` setzen und idealerweise zusätzlich hinter einen Reverse Proxy mit TLS/SSO stellen. Der Immich API Key wird nur im Backend verwendet.
 
-Mutierende Requests benötigen zusätzlich einen nicht-standardmäßigen `x-album-manager-action` Header. Damit können fremde Webseiten die Delete/Merge-Endpunkte nicht als einfache Cross-Origin-Requests auslösen.
+Mutierende Requests benötigen zusätzlich den nicht-standardmäßigen Header `x-album-manager-action: 1`.
 
 ## Technischer Ablauf des Merge
 
@@ -75,4 +96,4 @@ Mutierende Requests benötigen zusätzlich einen nicht-standardmäßigen `x-albu
 
 ## Hinweise
 
-Immich entwickelt die API aktiv weiter. Bei einem späteren v4-Release kann insbesondere die aktuell noch vorhandene flache Form von `/search/metadata` entfallen; dann muss der Search-Request auf die neue Filter-Struktur angepasst werden.
+Immich entwickelt die API aktiv weiter. Die flache Form von `/search/metadata` ist in v3 weiterhin vorhanden, im Immich-Quellcode aber bereits als für v4 zu entfernende Legacy-Variante markiert. Bei einem späteren v4-Upgrade muss deshalb insbesondere die Search-Anfrage auf die neue Filterstruktur umgestellt werden.

@@ -19,6 +19,14 @@ const elements = {
 };
 
 const actionHeaders = { 'content-type': 'application/json', 'x-album-manager-action': '1' };
+const numberFormatter = new Intl.NumberFormat('de-AT');
+const dateTimeFormatter = new Intl.DateTimeFormat('de-AT', {
+  day: '2-digit',
+  month: '2-digit',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+});
 
 bindControls();
 loadAlbums();
@@ -44,7 +52,7 @@ function bindControls() {
 
 async function loadAlbums() {
   elements.refresh.disabled = true;
-  elements.connection.textContent = 'Lade …';
+  elements.connection.textContent = 'Lade Alben + Rand-Items …';
   elements.connection.className = 'connection-state loading';
   try {
     const albums = await api(`/api/albums?scope=${encodeURIComponent(state.scope)}`);
@@ -71,7 +79,7 @@ function render() {
 function filteredAlbums() {
   const result = state.albums.filter((album) => {
     if (!state.query) return true;
-    const haystack = `${album.albumName} ${album.ownerName || ''}`.toLocaleLowerCase('de');
+    const haystack = `${album.albumName} ${album.ownerName || ''} ${album.newestAsset?.fileName || ''} ${album.oldestAsset?.fileName || ''}`.toLocaleLowerCase('de');
     return haystack.includes(state.query);
   });
 
@@ -81,7 +89,11 @@ function filteredAlbums() {
       case 'name-desc': return collator.compare(b.albumName, a.albumName);
       case 'count-desc': return b.assetCount - a.assetCount || collator.compare(a.albumName, b.albumName);
       case 'count-asc': return a.assetCount - b.assetCount || collator.compare(a.albumName, b.albumName);
-      case 'updated-desc': return String(b.updatedAt || '').localeCompare(String(a.updatedAt || ''));
+      case 'updated-desc': return compareDates(b.updatedAt, a.updatedAt) || collator.compare(a.albumName, b.albumName);
+      case 'newest-desc': return compareDates(itemDate(b, 'newest'), itemDate(a, 'newest')) || collator.compare(a.albumName, b.albumName);
+      case 'newest-asc': return compareDates(itemDate(a, 'newest'), itemDate(b, 'newest')) || collator.compare(a.albumName, b.albumName);
+      case 'oldest-asc': return compareDates(itemDate(a, 'oldest'), itemDate(b, 'oldest')) || collator.compare(a.albumName, b.albumName);
+      case 'oldest-desc': return compareDates(itemDate(b, 'oldest'), itemDate(a, 'oldest')) || collator.compare(a.albumName, b.albumName);
       default: return collator.compare(a.albumName, b.albumName);
     }
   });
@@ -93,19 +105,7 @@ function renderAlbumRow(album) {
   row.dataset.id = album.id;
   if (state.busy.has(album.id)) row.classList.add('busy');
 
-  const thumb = document.createElement('div');
-  thumb.className = 'album-thumb';
-  if (album.albumThumbnailAssetId) {
-    const image = document.createElement('img');
-    image.loading = 'lazy';
-    image.alt = '';
-    image.src = `/api/thumbnail/${album.albumThumbnailAssetId}`;
-    image.addEventListener('error', () => image.remove());
-    thumb.append(image);
-  }
-  const fallback = document.createElement('span');
-  fallback.textContent = '▧';
-  thumb.append(fallback);
+  const thumb = makeThumbnail(album.albumThumbnailAssetId, 'album-thumb');
 
   const nameCell = document.createElement('div');
   nameCell.className = 'name-cell';
@@ -129,11 +129,10 @@ function renderAlbumRow(album) {
 
   const count = document.createElement('div');
   count.className = 'asset-count';
-  count.textContent = new Intl.NumberFormat('de-AT').format(album.assetCount);
+  count.textContent = numberFormatter.format(album.assetCount);
 
-  const date = document.createElement('div');
-  date.className = 'date-cell';
-  date.textContent = formatRange(album.startDate, album.endDate);
+  const newest = renderItemCell(album.newestAsset, album.endDate, 'Kein neuestes Item');
+  const oldest = renderItemCell(album.oldestAsset, album.startDate, 'Kein ältestes Item');
 
   const sharing = document.createElement('div');
   sharing.className = 'sharing-cell';
@@ -179,8 +178,45 @@ function renderAlbumRow(album) {
   deleteButton.addEventListener('click', () => deleteAlbum(album));
 
   actions.append(mergeWrap, deleteButton);
-  row.append(thumb, nameCell, count, date, sharing, actions);
+  row.append(thumb, nameCell, count, newest, oldest, sharing, actions);
   return row;
+}
+
+function renderItemCell(asset, fallbackDate, emptyLabel) {
+  const cell = document.createElement('div');
+  cell.className = 'item-cell';
+  const assetId = asset?.id || null;
+  cell.append(makeThumbnail(assetId, 'item-thumb'));
+
+  const meta = document.createElement('div');
+  meta.className = 'item-meta';
+  const date = document.createElement('span');
+  date.className = 'item-date';
+  date.textContent = formatDateTime(asset?.date || fallbackDate);
+  const file = document.createElement('span');
+  file.className = 'subtle item-file';
+  file.textContent = asset?.fileName || (fallbackDate ? 'Datum aus Album-Metadaten' : emptyLabel);
+  file.title = asset?.fileName || '';
+  meta.append(date, file);
+  cell.append(meta);
+  return cell;
+}
+
+function makeThumbnail(assetId, className) {
+  const thumb = document.createElement('div');
+  thumb.className = className;
+  if (assetId) {
+    const image = document.createElement('img');
+    image.loading = 'lazy';
+    image.alt = '';
+    image.src = `/api/thumbnail/${assetId}`;
+    image.addEventListener('error', () => image.remove());
+    thumb.append(image);
+  }
+  const fallback = document.createElement('span');
+  fallback.textContent = '▧';
+  thumb.append(fallback);
+  return thumb;
 }
 
 async function renameAlbum(album, input) {
@@ -238,7 +274,6 @@ async function mergeAlbum(source, targetId) {
       body: JSON.stringify({ targetAlbumId: targetId }),
     });
     state.albums = state.albums.filter((album) => album.id !== source.id);
-    target.assetCount = Math.max(target.assetCount, target.assetCount + Number(result.newlyAdded || 0));
     showToast(`${source.albumName} → ${target.albumName}: ${result.assetCount} Assets verarbeitet`, 'success', 6000);
     await loadAlbums();
   } catch (error) {
@@ -271,14 +306,21 @@ async function api(url, init = {}) {
   return body;
 }
 
-function formatRange(start, end) {
-  if (!start && !end) return '–';
-  const formatter = new Intl.DateTimeFormat('de-AT', { month: 'short', year: 'numeric' });
-  const from = start ? formatter.format(new Date(start)) : '';
-  const to = end ? formatter.format(new Date(end)) : '';
-  if (!from) return to;
-  if (!to || from === to) return from;
-  return `${from} – ${to}`;
+function itemDate(album, edge) {
+  if (edge === 'newest') return album.newestAsset?.date || album.endDate || null;
+  return album.oldestAsset?.date || album.startDate || null;
+}
+
+function compareDates(a, b) {
+  const left = a ? new Date(a).getTime() : Number.NEGATIVE_INFINITY;
+  const right = b ? new Date(b).getTime() : Number.NEGATIVE_INFINITY;
+  return left - right;
+}
+
+function formatDateTime(value) {
+  if (!value) return '–';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '–' : dateTimeFormatter.format(date);
 }
 
 function showToast(message, type = 'info', duration = 4000) {

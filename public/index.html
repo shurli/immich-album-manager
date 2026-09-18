@@ -1,8 +1,8 @@
 <!doctype html>
 <html lang="de">
   <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
     <title>Immich Album Manager</title>
     <link rel="stylesheet" href="/assets/styles.css" />
@@ -13,7 +13,7 @@
         <div class="brand-mark" aria-hidden="true">✦</div>
         <div>
           <h1>Alben</h1>
-          <p>Immich Album Manager</p>
+          <p>Immich Album Manager · komplette Liste ohne Pagination</p>
         </div>
       </div>
       <button id="refreshButton" class="icon-button" title="Neu laden" aria-label="Neu laden">↻</button>
@@ -33,6 +33,10 @@
         <select id="sortSelect" title="Sortierung">
           <option value="name-asc">Name A–Z</option>
           <option value="name-desc">Name Z–A</option>
+          <option value="newest-desc">Neuestes Item: neu → alt</option>
+          <option value="newest-asc">Neuestes Item: alt → neu</option>
+          <option value="oldest-asc">Ältestes Item: alt → neu</option>
+          <option value="oldest-desc">Ältestes Item: neu → alt</option>
           <option value="count-desc">Meiste Assets</option>
           <option value="count-asc">Wenigste Assets</option>
           <option value="updated-desc">Zuletzt geändert</option>
@@ -40,20 +44,26 @@
       </section>
 
       <section class="summary-row">
-        <strong id="albumCount">0 Alben</strong>
+        <div>
+          <strong id="albumCount">0 Alben</strong>
+          <span class="summary-note">Alle Treffer werden in einer scrollbaren Liste angezeigt.</span>
+        </div>
         <span id="connectionState" class="connection-state">Verbinden …</span>
       </section>
 
       <section class="table-shell" aria-live="polite">
-        <div class="table-header album-grid">
-          <span class="thumb-col"></span>
-          <span>Album</span>
-          <span>Assets</span>
-          <span>Zeitraum</span>
-          <span>Besitz / Freigabe</span>
-          <span class="actions-col">Aktionen</span>
+        <div class="table-scroll">
+          <div class="table-header album-grid">
+            <span class="thumb-col"></span>
+            <span>Album</span>
+            <span>Assets</span>
+            <span>Neuestes Item</span>
+            <span>Ältestes Item</span>
+            <span>Besitz / Freigabe</span>
+            <span class="actions-col">Aktionen</span>
+          </div>
+          <div id="albumRows" class="album-rows"></div>
         </div>
-        <div id="albumRows" class="album-rows"></div>
         <div id="emptyState" class="empty-state" hidden>
           <div class="empty-icon">▧</div>
           <strong>Keine Alben gefunden</strong>
