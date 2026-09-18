@@ -1,0 +1,50 @@
+name: Build and Publish Docker Image
+
+# Der Workflow startet bei jedem Push in den "main"-Branch
+on:
+  push:
+    branches: ['master']
+  workflow_dispatch:
+
+# Definiert die Umgebungsvariablen
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-and-push-image:
+    runs-on: ubuntu-latest
+    
+    # WICHTIG: Erlaubt GitHub Actions, Pakete (Images) hochzuladen
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Repository auschecken
+        uses: actions/checkout@v4
+
+      - name: Login in die GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }} # Dieses Token wird von GitHub automatisch generiert!
+
+      - name: Metadaten (Tags, Labels) extrahieren
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # Erstellt automatisch einen "latest" Tag für den main-branch
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha
+
+      - name: Docker Image bauen und pushen
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
