@@ -1,0 +1,17 @@
+services:
+  immich-album-manager:
+    build: .
+    container_name: immich-album-manager
+    restart: unless-stopped
+    ports:
+      - "3473:3473"
+    environment:
+      IMMICH_URL: ${IMMICH_URL:-http://host.docker.internal:2283}
+      IMMICH_API_KEY: ${IMMICH_API_KEY}
+      APP_USERNAME: ${APP_USERNAME:-}
+      APP_PASSWORD: ${APP_PASSWORD:-}
+      REQUEST_TIMEOUT_MS: ${REQUEST_TIMEOUT_MS:-30000}
+      MERGE_PAGE_SIZE: ${MERGE_PAGE_SIZE:-1000}
+      MERGE_CHUNK_SIZE: ${MERGE_CHUNK_SIZE:-1000}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

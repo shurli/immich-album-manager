@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Immich Album Manager</title>
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">✦</div>
+        <div>
+          <h1>Alben</h1>
+          <p>Immich Album Manager</p>
+        </div>
+      </div>
+      <button id="refreshButton" class="icon-button" title="Neu laden" aria-label="Neu laden">↻</button>
+    </header>
+
+    <main>
+      <section class="controls" aria-label="Albumfilter">
+        <label class="search-box">
+          <span aria-hidden="true">⌕</span>
+          <input id="searchInput" type="search" autocomplete="off" placeholder="Alben suchen …" />
+        </label>
+        <select id="scopeSelect" title="Albumumfang">
+          <option value="all">Alle Alben</option>
+          <option value="owned">Eigene Alben</option>
+          <option value="shared">Geteilte Alben</option>
+        </select>
+        <select id="sortSelect" title="Sortierung">
+          <option value="name-asc">Name A–Z</option>
+          <option value="name-desc">Name Z–A</option>
+          <option value="count-desc">Meiste Assets</option>
+          <option value="count-asc">Wenigste Assets</option>
+          <option value="updated-desc">Zuletzt geändert</option>
+        </select>
+      </section>
+
+      <section class="summary-row">
+        <strong id="albumCount">0 Alben</strong>
+        <span id="connectionState" class="connection-state">Verbinden …</span>
+      </section>
+
+      <section class="table-shell" aria-live="polite">
+        <div class="table-header album-grid">
+          <span class="thumb-col"></span>
+          <span>Album</span>
+          <span>Assets</span>
+          <span>Zeitraum</span>
+          <span>Besitz / Freigabe</span>
+          <span class="actions-col">Aktionen</span>
+        </div>
+        <div id="albumRows" class="album-rows"></div>
+        <div id="emptyState" class="empty-state" hidden>
+          <div class="empty-icon">▧</div>
+          <strong>Keine Alben gefunden</strong>
+          <span>Filter oder Suche anpassen.</span>
+        </div>
+      </section>
+    </main>
+
+    <div id="toastStack" class="toast-stack" aria-live="assertive"></div>
+    <script type="module" src="/assets/app.js"></script>
+  </body>
+</html>

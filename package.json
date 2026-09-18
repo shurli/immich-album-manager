@@ -1,0 +1,17 @@
+{
+  "name": "immich-album-manager",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Fast album list management UI for Immich",
+  "scripts": {
+    "start": "node server.mjs",
+    "check": "node --check server.mjs && node --check public/app.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "express": "5.1.0"
+  }
+}
