@@ -6,6 +6,7 @@ import crypto from 'node:crypto';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 
+const APP_VERSION = '0.3.1';
 const PORT = Number(process.env.PORT || 3473);
 const IMMICH_URL = normalizeImmichUrl(process.env.IMMICH_URL || 'http://immich-server:2283');
 const IMMICH_API_KEY = process.env.IMMICH_API_KEY || '';
@@ -26,10 +27,17 @@ if (!IMMICH_API_KEY) {
 app.disable('x-powered-by');
 app.use(express.json({ limit: '1mb' }));
 app.use(optionalBasicAuth);
-app.use('/assets', express.static(path.join(__dirname, 'public'), { immutable: true, maxAge: '1h' }));
+app.use('/assets', express.static(path.join(__dirname, 'public'), {
+  etag: true,
+  maxAge: 0,
+  setHeaders(res) {
+    res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+  },
+}));
 
 app.get('/healthz', (_req, res) => {
-  res.json({ ok: true });
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ ok: true, version: APP_VERSION });
 });
 
 app.get('/api/status', async (_req, res, next) => {
@@ -37,6 +45,7 @@ app.get('/api/status', async (_req, res, next) => {
     const albums = await immichJson('/albums?isOwned=true');
     res.json({
       ok: true,
+      version: APP_VERSION,
       immichUrl: redactUrl(IMMICH_URL),
       albumCount: Array.isArray(albums) ? albums.length : null,
     });
@@ -150,6 +159,7 @@ app.post('/api/albums/:sourceId/merge', requireActionHeader, async (req, res, ne
 });
 
 app.get('/', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
@@ -164,7 +174,7 @@ app.use((error, _req, res, _next) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Immich Album Manager listening on :${PORT}`);
+  console.log(`Immich Album Manager v${APP_VERSION} listening on :${PORT}`);
   console.log(`Immich API: ${redactUrl(IMMICH_URL)}`);
 });
 

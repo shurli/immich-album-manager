@@ -3,7 +3,7 @@ name: Build and Publish Docker Image
 # Der Workflow startet bei jedem Push in den "main"-Branch
 on:
   push:
-    branches: ['master']
+    branches: ['main']
   workflow_dispatch:
 
 # Definiert die Umgebungsvariablen
