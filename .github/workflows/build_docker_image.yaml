@@ -24,6 +24,14 @@ jobs:
       - name: Repository auschecken
         uses: actions/checkout@v4
 
+      - name: App-Version aus package.json lesen
+        id: version
+        shell: bash
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Docker image version: $VERSION"
+
       - name: Login in die GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -36,8 +44,11 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          # Erstellt automatisch einen "latest" Tag für den main-branch
+          # Version kommt aus package.json, z. B. 0.3.2.
+          # Dadurch entstehen 0.3.2, 0.3, latest und sha-<commit>.
           tags: |
+            type=semver,pattern={{version}},value=${{ steps.version.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ steps.version.outputs.version }}
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha
 
