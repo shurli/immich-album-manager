@@ -1,6 +1,13 @@
-# Immich Album Manager 0.3.2
+# Immich Album Manager 0.4.0
 
 Kleine Docker-Webapp für schnelle Albumverwaltung in einer dichten Listenansicht, angelehnt an die Immich-Albumübersicht.
+
+## Neu in 0.4.0
+
+- **Archivstatus pro Album:** zeigt `Alle archiviert`, `Nicht archiviert`, einen gemischten Zähler oder einen unvollständigen Status bei nicht zugreifbaren Assets.
+- **Archiv-Toggle direkt in der Liste:** Ist ein Album vollständig archiviert, setzt der Button alle zugreifbaren Assets zurück auf die Timeline. Andernfalls archiviert er alle zugreifbaren Assets.
+- Der Status wird nach dem Laden der Albumliste asynchron und mit begrenzter Parallelität ermittelt, damit die Übersicht schnell sichtbar bleibt.
+- Große Alben werden beim Archivieren/Entarchivieren in Batches verarbeitet.
 
 ## Neu in 0.3.2
 
@@ -63,6 +70,7 @@ Für alle Funktionen sollte der Immich API Key mindestens passende Rechte für f
 - Assets lesen / suchen
 - Assets teilen, soweit von Immich beim Hinzufügen zu einem Album verlangt
 - Asset-Thumbnail ansehen
+- Assets ändern / `AssetUpdate` (für Archivieren und Entarchivieren)
 
 ## Start
 
@@ -106,9 +114,12 @@ MERGE_CHUNK_SIZE=1000
 MERGE_SOURCE_CONCURRENCY=3
 EXTREMA_CONCURRENCY=6
 EXTREMA_CACHE_TTL_MS=120000
+ARCHIVE_STATUS_CONCURRENCY=4
+ARCHIVE_STATUS_CACHE_TTL_MS=120000
+ARCHIVE_CHUNK_SIZE=1000
 ```
 
-`MERGE_SOURCE_CONCURRENCY` begrenzt, wie viele Quellalben beim Einlesen eines Multi-Merge gleichzeitig abgefragt werden. `EXTREMA_CONCURRENCY` begrenzt die parallelen Rand-Item-Abfragen der Listenansicht.
+`MERGE_SOURCE_CONCURRENCY` begrenzt, wie viele Quellalben beim Einlesen eines Multi-Merge gleichzeitig abgefragt werden. `EXTREMA_CONCURRENCY` begrenzt die parallelen Rand-Item-Abfragen der Listenansicht. `ARCHIVE_STATUS_CONCURRENCY` begrenzt die parallelen Album-Scans für den Archivstatus; `ARCHIVE_STATUS_CACHE_TTL_MS` cached diese Ergebnisse. `ARCHIVE_CHUNK_SIZE` bestimmt die Batchgröße beim Archivieren/Entarchivieren.
 
 ## Sicherheit
 

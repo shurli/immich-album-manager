@@ -6,7 +6,7 @@ import crypto from 'node:crypto';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 
-const APP_VERSION = '0.3.2';
+const APP_VERSION = '0.4.0';
 const PORT = Number(process.env.PORT || 3473);
 const IMMICH_URL = normalizeImmichUrl(process.env.IMMICH_URL || 'http://immich-server:2283');
 const IMMICH_PUBLIC_URL = normalizeImmichPublicUrl(process.env.IMMICH_PUBLIC_URL || process.env.IMMICH_URL || 'http://immich-server:2283');
@@ -19,7 +19,11 @@ const MERGE_CHUNK_SIZE = clamp(Number(process.env.MERGE_CHUNK_SIZE || 1000), 1, 
 const MERGE_SOURCE_CONCURRENCY = clamp(Number(process.env.MERGE_SOURCE_CONCURRENCY || 3), 1, 10);
 const EXTREMA_CONCURRENCY = clamp(Number(process.env.EXTREMA_CONCURRENCY || 6), 1, 20);
 const EXTREMA_CACHE_TTL_MS = clamp(Number(process.env.EXTREMA_CACHE_TTL_MS || 120000), 0, 3600000);
+const ARCHIVE_STATUS_CONCURRENCY = clamp(Number(process.env.ARCHIVE_STATUS_CONCURRENCY || 4), 1, 12);
+const ARCHIVE_STATUS_CACHE_TTL_MS = clamp(Number(process.env.ARCHIVE_STATUS_CACHE_TTL_MS || 120000), 0, 3600000);
+const ARCHIVE_CHUNK_SIZE = clamp(Number(process.env.ARCHIVE_CHUNK_SIZE || 1000), 1, 5000);
 const extremaCache = new Map();
+const archiveStatusCache = new Map();
 
 if (!IMMICH_API_KEY) {
   console.warn('[config] IMMICH_API_KEY is empty. API calls will fail until it is configured.');
@@ -85,6 +89,97 @@ app.get('/api/albums', async (req, res, next) => {
   }
 });
 
+app.post('/api/albums/archive-status', async (req, res, next) => {
+  try {
+    const albumsRaw = Array.isArray(req.body?.albums) ? req.body.albums : [];
+    if (albumsRaw.length > 500) return res.status(400).json({ error: 'Zu viele Alben für eine Statusabfrage (maximal 500).' });
+
+    const albums = albumsRaw.map((item) => ({
+      id: requireUuid(item?.id, 'album id'),
+      assetCount: clamp(Number(item?.assetCount || 0), 0, Number.MAX_SAFE_INTEGER),
+    }));
+
+    const statuses = await mapConcurrent(albums, ARCHIVE_STATUS_CONCURRENCY, async ({ id, assetCount }) => {
+      try {
+        return await getAlbumArchiveStatus(id, assetCount);
+      } catch (error) {
+        console.warn(`[archive-status] ${id}: ${error.message}`);
+        return {
+          albumId: id,
+          state: 'error',
+          assetCount,
+          accessibleCount: 0,
+          archivedCount: 0,
+          missingCount: 0,
+          error: error.message,
+        };
+      }
+    });
+
+    res.json(statuses);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/albums/:id/archive-toggle', requireActionHeader, async (req, res, next) => {
+  try {
+    const id = requireUuid(req.params.id, 'album id');
+    const album = await immichJson(`/albums/${id}`);
+    const expectedCount = Number(album?.assetCount || 0);
+    const scan = await scanAlbumArchiveState(id, expectedCount);
+
+    if (scan.accessibleCount === 0) {
+      archiveStatusCache.set(id, { value: scan, expiresAt: Date.now() + ARCHIVE_STATUS_CACHE_TTL_MS });
+      return res.json({
+        ok: true,
+        action: 'none',
+        updatedCount: 0,
+        status: scan,
+      });
+    }
+
+    const targetVisibility = scan.state === 'all' ? 'timeline' : 'archive';
+    const ids = scan.assets.map((asset) => asset.id);
+
+    for (const batch of chunk(ids, ARCHIVE_CHUNK_SIZE)) {
+      await immichJson('/assets', {
+        method: 'PATCH',
+        body: JSON.stringify({ ids: batch, visibility: targetVisibility }),
+      });
+    }
+
+    const archivedCount = targetVisibility === 'archive' ? scan.accessibleCount : 0;
+    const state = scan.missingCount > 0
+      ? 'partial'
+      : targetVisibility === 'archive'
+        ? 'all'
+        : 'none';
+
+    const status = {
+      albumId: id,
+      state,
+      assetCount: scan.assetCount,
+      accessibleCount: scan.accessibleCount,
+      archivedCount,
+      missingCount: scan.missingCount,
+    };
+
+    if (ARCHIVE_STATUS_CACHE_TTL_MS > 0) {
+      archiveStatusCache.set(id, { value: status, expiresAt: Date.now() + ARCHIVE_STATUS_CACHE_TTL_MS });
+    }
+
+    res.json({
+      ok: true,
+      action: targetVisibility === 'archive' ? 'archive' : 'unarchive',
+      updatedCount: scan.accessibleCount,
+      status,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get('/api/thumbnail/:assetId', async (req, res, next) => {
   try {
     const assetId = requireUuid(req.params.assetId, 'assetId');
@@ -124,6 +219,7 @@ app.delete('/api/albums/:id', requireActionHeader, async (req, res, next) => {
     const id = requireUuid(req.params.id, 'album id');
     await immichJson(`/albums/${id}`, { method: 'DELETE' });
     extremaCache.delete(id);
+    archiveStatusCache.delete(id);
     res.status(204).end();
   } catch (error) {
     next(error);
@@ -387,9 +483,11 @@ async function mergeAlbums(sourceIds, targetId) {
   const deleteResults = await Promise.allSettled(sourceIds.map(async (sourceId) => {
     await immichJson(`/albums/${sourceId}`, { method: 'DELETE' });
     extremaCache.delete(sourceId);
+    archiveStatusCache.delete(sourceId);
     return sourceId;
   }));
   extremaCache.delete(targetId);
+  archiveStatusCache.delete(targetId);
 
   const cleanupFailures = deleteResults
     .map((result, index) => ({ result, id: sourceIds[index], name: sourceAlbums[index]?.albumName || sourceIds[index] }))
@@ -415,10 +513,68 @@ async function mergeAlbums(sourceIds, targetId) {
   };
 }
 
-async function getAlbumAssetIds(albumId) {
-  const ids = [];
+async function getAlbumArchiveStatus(albumId, expectedCount) {
+  const cached = archiveStatusCache.get(albumId);
+  if (cached && cached.expiresAt > Date.now() && cached.value?.assetCount === expectedCount) return cached.value;
+
+  const scan = await scanAlbumArchiveState(albumId, expectedCount);
+  const value = {
+    albumId,
+    state: scan.state,
+    assetCount: scan.assetCount,
+    accessibleCount: scan.accessibleCount,
+    archivedCount: scan.archivedCount,
+    missingCount: scan.missingCount,
+  };
+
+  if (ARCHIVE_STATUS_CACHE_TTL_MS > 0) {
+    archiveStatusCache.set(albumId, { value, expiresAt: Date.now() + ARCHIVE_STATUS_CACHE_TTL_MS });
+  }
+  return value;
+}
+
+async function scanAlbumArchiveState(albumId, expectedCount) {
+  const assets = await getAlbumAssetEntries(albumId);
+  const accessibleCount = assets.length;
+  const assetCount = Math.max(Number(expectedCount || 0), accessibleCount);
+  const archivedCount = assets.filter(isArchivedAsset).length;
+  const missingCount = Math.max(assetCount - accessibleCount, 0);
+
+  let state = 'none';
+  if (assetCount === 0) state = 'empty';
+  else if (missingCount > 0) state = 'partial';
+  else if (archivedCount === accessibleCount && accessibleCount > 0) state = 'all';
+  else if (archivedCount > 0) state = 'mixed';
+
+  return {
+    albumId,
+    state,
+    assetCount,
+    accessibleCount,
+    archivedCount,
+    missingCount,
+    assets,
+  };
+}
+
+function isArchivedAsset(asset) {
+  return asset?.visibility === 'archive' || asset?.isArchived === true;
+}
+
+async function getAlbumAssetEntries(albumId) {
+  const assets = [];
   const seen = new Set();
   let page = 1;
+
+  const addAsset = (asset) => {
+    if (!asset?.id || seen.has(asset.id)) return;
+    seen.add(asset.id);
+    assets.push({
+      id: asset.id,
+      visibility: asset.visibility || (asset.isArchived ? 'archive' : null),
+      isArchived: asset.isArchived === true,
+    });
+  };
 
   while (true) {
     const data = await immichJson('/search/metadata', {
@@ -436,16 +592,8 @@ async function getAlbumAssetIds(albumId) {
     const container = data?.assets || data || {};
     const items = Array.isArray(container.items) ? container.items : Array.isArray(data?.items) ? data.items : [];
     for (const item of items) {
-      if (item?.id && !seen.has(item.id)) {
-        seen.add(item.id);
-        ids.push(item.id);
-      }
-      for (const child of item?.stack?.assets || []) {
-        if (child?.id && !seen.has(child.id)) {
-          seen.add(child.id);
-          ids.push(child.id);
-        }
-      }
+      addAsset(item);
+      for (const child of item?.stack?.assets || []) addAsset(child);
     }
 
     const nextPageRaw = container.nextPage ?? data?.nextPage ?? null;
@@ -461,7 +609,11 @@ async function getAlbumAssetIds(albumId) {
     break;
   }
 
-  return ids;
+  return assets;
+}
+
+async function getAlbumAssetIds(albumId) {
+  return (await getAlbumAssetEntries(albumId)).map((asset) => asset.id);
 }
 
 function toAlbumSummary(album = {}) {

@@ -108,9 +108,9 @@ select {
 .table-shell { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; box-shadow: var(--shadow); }
 .table-scroll { overflow-x: auto; }
 .album-grid {
-  min-width: 1460px;
+  min-width: 1640px;
   display: grid;
-  grid-template-columns: 58px 48px 58px minmax(220px, 1.25fr) 74px 220px 220px 150px 70px;
+  grid-template-columns: 58px 48px 58px minmax(220px, 1.25fr) 74px 220px 220px 150px 150px 70px;
   align-items: center;
   gap: 13px;
 }
@@ -163,6 +163,14 @@ select {
 .item-meta { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .item-date { font-size: 12px; font-weight: 620; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .item-file { display: block; max-width: 165px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.archive-cell { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 5px; }
+.archive-badge { display: inline-flex; min-height: 22px; align-items: center; padding: 0 7px; border-radius: 999px; background: #f0f0f2; color: #65656e; font-size: 10px; font-weight: 700; white-space: nowrap; }
+.archive-badge.all { background: var(--success-soft); color: var(--success); }
+.archive-badge.mixed, .archive-badge.partial { background: #fff5d9; color: #8a5a00; }
+.archive-badge.error { background: var(--danger-soft); color: var(--danger); }
+.archive-toggle { min-height: 28px; padding: 0 9px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: inherit; font-size: 11px; font-weight: 700; }
+.archive-toggle:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.archive-toggle:disabled { opacity: .5; cursor: not-allowed; }
 .sharing-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; }
 .role-pill { display: inline-flex; align-items: center; min-height: 23px; padding: 0 8px; border-radius: 999px; background: #f0f0f2; color: #5b5b64; font-size: 11px; font-weight: 650; }
 .role-pill.owner { background: var(--accent-soft); color: var(--accent); }
@@ -214,6 +222,8 @@ select {
   .album-row.merge-source-row:hover { background: #222641; }
   .album-row.merge-target-row:hover { background: #342b1d; }
   .target-selector:hover, .target-selector.selected { background: #3a301e; border-color: #6d5631; color: #f0c46d; }
+  .archive-badge.mixed, .archive-badge.partial { background: #3a301e; color: #f0c46d; }
+  .archive-toggle { background: #202126; }
   .album-thumb, .item-thumb { background: #2d2f36; }
   .inline-name:hover, .inline-name:focus { background: #202126; }
   .action-button, .icon-button { background: #202126; color: #ceced6; }

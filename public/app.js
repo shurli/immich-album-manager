@@ -7,6 +7,8 @@ const state = {
   mergeSources: new Set(),
   mergeTarget: null,
   merging: false,
+  archiveBusy: new Set(),
+  archiveStatusRequest: 0,
 };
 
 const elements = {
@@ -68,12 +70,19 @@ async function loadAlbums() {
   elements.connection.textContent = 'Lade Alben + Rand-Items …';
   elements.connection.className = 'connection-state loading';
   try {
+    const requestId = ++state.archiveStatusRequest;
     const albums = await api(`/api/albums?scope=${encodeURIComponent(state.scope)}`);
+    for (const album of albums) {
+      album.archiveStatus = album.assetCount > 0
+        ? { state: 'loading', assetCount: album.assetCount, archivedCount: 0, accessibleCount: 0, missingCount: 0 }
+        : { state: 'empty', assetCount: 0, archivedCount: 0, accessibleCount: 0, missingCount: 0 };
+    }
     state.albums = albums;
     reconcileMergeSelection();
     elements.connection.textContent = 'Verbunden';
     elements.connection.className = 'connection-state ok';
     render();
+    void loadArchiveStatuses(albums, requestId);
   } catch (error) {
     elements.connection.textContent = 'Verbindung fehlgeschlagen';
     elements.connection.className = 'connection-state error';
@@ -208,6 +217,7 @@ function renderAlbumRow(album) {
 
   const newest = renderItemCell(album.newestAsset, album.endDate, 'Kein neuestes Item');
   const oldest = renderItemCell(album.oldestAsset, album.startDate, 'Kein ältestes Item');
+  const archive = renderArchiveCell(album);
 
   const sharing = document.createElement('div');
   sharing.className = 'sharing-cell';
@@ -233,7 +243,7 @@ function renderAlbumRow(album) {
   deleteButton.addEventListener('click', () => deleteAlbum(album));
   actions.append(deleteButton);
 
-  row.append(sourceCell, targetCell, thumb, nameCell, count, newest, oldest, sharing, actions);
+  row.append(sourceCell, targetCell, thumb, nameCell, count, newest, oldest, archive, sharing, actions);
   return row;
 }
 
@@ -275,6 +285,117 @@ function clearMergeSelection() {
   state.mergeSources.clear();
   state.mergeTarget = null;
   render();
+}
+
+async function loadArchiveStatuses(albums, requestId) {
+  const candidates = albums.filter((album) => album.assetCount > 0);
+  if (candidates.length === 0) return;
+
+  try {
+    const statuses = await api('/api/albums/archive-status', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        albums: candidates.map((album) => ({ id: album.id, assetCount: album.assetCount })),
+      }),
+    });
+
+    if (requestId !== state.archiveStatusRequest) return;
+    const byId = new Map(statuses.map((status) => [status.albumId, status]));
+    for (const album of state.albums) {
+      const status = byId.get(album.id);
+      if (status && !state.archiveBusy.has(album.id)) album.archiveStatus = status;
+    }
+    render();
+  } catch (error) {
+    if (requestId !== state.archiveStatusRequest) return;
+    for (const album of state.albums) {
+      if (album.assetCount > 0 && album.archiveStatus?.state === 'loading') {
+        album.archiveStatus = { state: 'error', assetCount: album.assetCount, error: error.message };
+      }
+    }
+    render();
+    showToast(`Archivstatus konnte nicht vollständig geladen werden: ${error.message}`, 'error', 7000);
+  }
+}
+
+function renderArchiveCell(album) {
+  const cell = document.createElement('div');
+  cell.className = 'archive-cell';
+
+  const status = album.archiveStatus || { state: album.assetCount > 0 ? 'loading' : 'empty' };
+  const badge = document.createElement('span');
+  badge.className = `archive-badge ${status.state || 'loading'}`;
+
+  if (status.state === 'all') {
+    badge.textContent = 'Alle archiviert';
+  } else if (status.state === 'none') {
+    badge.textContent = 'Nicht archiviert';
+  } else if (status.state === 'mixed') {
+    badge.textContent = `${numberFormatter.format(status.archivedCount || 0)}/${numberFormatter.format(status.assetCount || album.assetCount)} archiviert`;
+  } else if (status.state === 'partial') {
+    badge.textContent = `${numberFormatter.format(status.archivedCount || 0)}/${numberFormatter.format(status.assetCount || album.assetCount)} archiviert`;
+    badge.title = status.missingCount > 0
+      ? `${numberFormatter.format(status.missingCount)} Asset(s) sind für den API-Key nicht zugreifbar, z. B. gesperrte Assets.`
+      : 'Der Archivstatus konnte nicht vollständig bestimmt werden.';
+  } else if (status.state === 'empty') {
+    badge.textContent = 'Leer';
+  } else if (status.state === 'error') {
+    badge.textContent = 'Statusfehler';
+    badge.title = status.error || '';
+  } else {
+    badge.textContent = 'Prüfe …';
+  }
+
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'archive-toggle';
+  button.disabled = state.merging || state.archiveBusy.has(album.id) || status.state === 'loading' || status.state === 'empty';
+  if (state.archiveBusy.has(album.id)) {
+    button.textContent = 'Ändere …';
+  } else if (status.state === 'all') {
+    button.textContent = 'Entarchivieren';
+    button.title = 'Alle Assets dieses Albums aus dem Archiv zurück auf die Timeline setzen';
+  } else {
+    button.textContent = 'Archivieren';
+    button.title = 'Alle Assets dieses Albums archivieren';
+  }
+  button.addEventListener('click', () => toggleAlbumArchive(album));
+
+  cell.append(badge, button);
+  return cell;
+}
+
+async function toggleAlbumArchive(album) {
+  if (state.merging || state.archiveBusy.has(album.id) || album.assetCount < 1) return;
+
+  state.archiveBusy.add(album.id);
+  render();
+  try {
+    const result = await api(`/api/albums/${album.id}/archive-toggle`, {
+      method: 'POST',
+      headers: actionHeaders,
+      body: '{}',
+    });
+
+    album.archiveStatus = result.status;
+    const verb = result.action === 'unarchive' ? 'entarchiviert' : result.action === 'archive' ? 'archiviert' : 'geändert';
+    const missing = Number(result.status?.missingCount || 0);
+    if (missing > 0) {
+      showToast(
+        `${numberFormatter.format(result.updatedCount)} Assets ${verb}; ${numberFormatter.format(missing)} Asset(s) waren nicht zugreifbar.`,
+        'error',
+        8000,
+      );
+    } else {
+      showToast(`${numberFormatter.format(result.updatedCount)} Assets ${verb}: ${album.albumName}`, 'success', 5000);
+    }
+  } catch (error) {
+    showToast(error.message, 'error', 8000);
+  } finally {
+    state.archiveBusy.delete(album.id);
+    render();
+  }
 }
 
 function renderItemCell(asset, fallbackDate, emptyLabel) {
