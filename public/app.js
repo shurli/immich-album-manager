@@ -196,20 +196,32 @@ function renderAlbumRow(album) {
   input.className = 'inline-name';
   input.value = album.albumName;
   input.setAttribute('aria-label', `Album ${album.albumName} umbenennen`);
-  input.title = 'Direkt bearbeiten; Enter oder Fokusverlust speichert';
+  input.setAttribute('autocomplete', 'off');
+  input.title = 'Direkt bearbeiten; passende bestehende Alben werden vorgeschlagen';
   input.disabled = state.merging;
+  const suggestions = document.createElement('div');
+  suggestions.className = 'name-suggestions';
+  suggestions.hidden = true;
+
+  input.addEventListener('focus', () => updateNameSuggestions(album, input, suggestions));
+  input.addEventListener('input', () => updateNameSuggestions(album, input, suggestions));
   input.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') input.blur();
     if (event.key === 'Escape') {
+      suggestions.hidden = true;
       input.value = album.albumName;
       input.blur();
     }
   });
-  input.addEventListener('blur', () => renameAlbum(album, input));
+  input.addEventListener('blur', () => {
+    suggestions.hidden = true;
+    renameAlbum(album, input);
+  });
+
   const sub = document.createElement('span');
   sub.className = 'subtle mono';
   sub.textContent = album.id.slice(0, 8);
-  nameCell.append(input, sub);
+  nameCell.append(input, sub, suggestions);
 
   const count = document.createElement('div');
   count.className = 'asset-count';
@@ -285,6 +297,129 @@ function clearMergeSelection() {
   state.mergeSources.clear();
   state.mergeTarget = null;
   render();
+}
+
+function updateNameSuggestions(album, input, container) {
+  const raw = input.value.trim();
+  const query = raw.toLocaleLowerCase('de');
+
+  if (!query || raw === album.albumName || state.merging || state.busy.has(album.id)) {
+    container.hidden = true;
+    container.replaceChildren();
+    return;
+  }
+
+  const collator = new Intl.Collator('de', { numeric: true, sensitivity: 'base' });
+  const matches = state.albums
+    .filter((candidate) => candidate.id !== album.id)
+    .map((candidate) => {
+      const name = candidate.albumName || '';
+      const normalized = name.toLocaleLowerCase('de');
+      const starts = normalized.startsWith(query);
+      const contains = normalized.includes(query);
+      return { candidate, starts, contains };
+    })
+    .filter((item) => item.contains)
+    .sort((a, b) => {
+      if (a.starts !== b.starts) return a.starts ? -1 : 1;
+      return collator.compare(a.candidate.albumName, b.candidate.albumName);
+    })
+    .slice(0, 6);
+
+  if (matches.length === 0) {
+    container.hidden = true;
+    container.replaceChildren();
+    return;
+  }
+
+  const rows = matches.map(({ candidate }) => {
+    const row = document.createElement('div');
+    row.className = 'name-suggestion';
+
+    const meta = document.createElement('div');
+    meta.className = 'name-suggestion-meta';
+    const name = document.createElement('strong');
+    name.textContent = candidate.albumName;
+    const detail = document.createElement('span');
+    detail.textContent = `${numberFormatter.format(candidate.assetCount || 0)} Assets`;
+    meta.append(name, detail);
+
+    const actions = document.createElement('div');
+    actions.className = 'name-suggestion-actions';
+
+    const adopt = document.createElement('button');
+    adopt.type = 'button';
+    adopt.className = 'suggestion-button';
+    adopt.textContent = 'Übernehmen';
+    adopt.title = 'Vorschlag ins Eingabefeld übernehmen und weiterbearbeiten';
+    adopt.addEventListener('mousedown', (event) => event.preventDefault());
+    adopt.addEventListener('click', () => {
+      input.value = candidate.albumName;
+      input.focus();
+      updateNameSuggestions(album, input, container);
+      input.setSelectionRange(input.value.length, input.value.length);
+    });
+
+    const merge = document.createElement('button');
+    merge.type = 'button';
+    merge.className = 'suggestion-button merge';
+    merge.textContent = 'Mergen';
+    merge.title = `${album.albumName} direkt in ${candidate.albumName} mergen`;
+    merge.addEventListener('mousedown', (event) => event.preventDefault());
+    merge.addEventListener('click', () => mergeSuggestedAlbum(album, candidate, container));
+
+    actions.append(adopt, merge);
+    row.append(meta, actions);
+    return row;
+  });
+
+  container.replaceChildren(...rows);
+  container.hidden = false;
+}
+
+async function mergeSuggestedAlbum(sourceAlbum, targetAlbum, suggestions) {
+  if (state.merging || state.busy.has(sourceAlbum.id) || state.busy.has(targetAlbum.id)) return;
+
+  suggestions.hidden = true;
+  state.merging = true;
+  state.busy.add(sourceAlbum.id);
+  state.busy.add(targetAlbum.id);
+  render();
+  showToast(`Merge läuft: ${sourceAlbum.albumName} → ${targetAlbum.albumName}`, 'info', 3000);
+
+  try {
+    const result = await api(`/api/albums/${sourceAlbum.id}/merge`, {
+      method: 'POST',
+      headers: actionHeaders,
+      body: JSON.stringify({ targetAlbumId: targetAlbum.id }),
+    });
+
+    if (result.cleanupComplete === false) {
+      showToast(
+        `Assets wurden nach ${targetAlbum.albumName} übernommen, aber das Quellalbum konnte nicht gelöscht werden.`,
+        'error',
+        9000,
+      );
+    } else {
+      showToast(
+        `${sourceAlbum.albumName} → ${targetAlbum.albumName}: ${numberFormatter.format(result.uniqueAssetCount || 0)} Assets verarbeitet`,
+        'success',
+        6000,
+      );
+    }
+
+    state.mergeSources.delete(sourceAlbum.id);
+    state.mergeSources.delete(targetAlbum.id);
+    if (state.mergeTarget === sourceAlbum.id || state.mergeTarget === targetAlbum.id) state.mergeTarget = null;
+    await loadAlbums();
+  } catch (error) {
+    showToast(error.message, 'error', 10000);
+  } finally {
+    state.merging = false;
+    state.busy.delete(sourceAlbum.id);
+    state.busy.delete(targetAlbum.id);
+    render();
+  }
 }
 
 async function loadArchiveStatuses(albums, requestId) {

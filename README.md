@@ -1,6 +1,13 @@
-# Immich Album Manager 0.4.1
+# Immich Album Manager 0.5.0
 
 Kleine Docker-Webapp für schnelle Albumverwaltung in einer dichten Listenansicht, angelehnt an die Immich-Albumübersicht.
+
+## Neu in 0.5.0
+
+- Beim Bearbeiten eines Albumnamens werden passende bestehende Alben direkt unter dem Eingabefeld vorgeschlagen.
+- **Übernehmen** kopiert einen Vorschlag ins Eingabefeld, ohne sofort zu speichern, damit der Name weiterbearbeitet werden kann.
+- **Mergen** führt das aktuell bearbeitete Album direkt in das vorgeschlagene bestehende Album zusammen.
+- Die sichtbare Entwicklungsbezeichnung „komplette Liste ohne Pagination“ wurde aus der App entfernt.
 
 ## Neu in 0.4.1
 
