@@ -6,7 +6,7 @@ import crypto from 'node:crypto';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 
-const APP_VERSION = '0.4.0';
+const APP_VERSION = '0.4.1';
 const PORT = Number(process.env.PORT || 3473);
 const IMMICH_URL = normalizeImmichUrl(process.env.IMMICH_URL || 'http://immich-server:2283');
 const IMMICH_PUBLIC_URL = normalizeImmichPublicUrl(process.env.IMMICH_PUBLIC_URL || process.env.IMMICH_URL || 'http://immich-server:2283');

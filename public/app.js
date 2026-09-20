@@ -291,31 +291,49 @@ async function loadArchiveStatuses(albums, requestId) {
   const candidates = albums.filter((album) => album.assetCount > 0);
   if (candidates.length === 0) return;
 
-  try {
-    const statuses = await api('/api/albums/archive-status', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        albums: candidates.map((album) => ({ id: album.id, assetCount: album.assetCount })),
-      }),
-    });
+  const batchSize = 500;
+  let failedBatches = 0;
 
+  for (let offset = 0; offset < candidates.length; offset += batchSize) {
     if (requestId !== state.archiveStatusRequest) return;
-    const byId = new Map(statuses.map((status) => [status.albumId, status]));
-    for (const album of state.albums) {
-      const status = byId.get(album.id);
-      if (status && !state.archiveBusy.has(album.id)) album.archiveStatus = status;
-    }
-    render();
-  } catch (error) {
-    if (requestId !== state.archiveStatusRequest) return;
-    for (const album of state.albums) {
-      if (album.assetCount > 0 && album.archiveStatus?.state === 'loading') {
-        album.archiveStatus = { state: 'error', assetCount: album.assetCount, error: error.message };
+
+    const batch = candidates.slice(offset, offset + batchSize);
+    try {
+      const statuses = await api('/api/albums/archive-status', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          albums: batch.map((album) => ({ id: album.id, assetCount: album.assetCount })),
+        }),
+      });
+
+      if (requestId !== state.archiveStatusRequest) return;
+      const byId = new Map(statuses.map((status) => [status.albumId, status]));
+      for (const album of state.albums) {
+        const status = byId.get(album.id);
+        if (status && !state.archiveBusy.has(album.id)) album.archiveStatus = status;
       }
+      render();
+    } catch (error) {
+      if (requestId !== state.archiveStatusRequest) return;
+      failedBatches += 1;
+      const failedIds = new Set(batch.map((album) => album.id));
+      for (const album of state.albums) {
+        if (failedIds.has(album.id) && album.archiveStatus?.state === 'loading') {
+          album.archiveStatus = { state: 'error', assetCount: album.assetCount, error: error.message };
+        }
+      }
+      render();
+      console.error('[archive-status]', error);
     }
-    render();
-    showToast(`Archivstatus konnte nicht vollständig geladen werden: ${error.message}`, 'error', 7000);
+  }
+
+  if (failedBatches > 0 && requestId === state.archiveStatusRequest) {
+    showToast(
+      `Archivstatus konnte für ${failedBatches} Block/Blöcke nicht geladen werden. Die übrigen Alben wurden weiter geprüft.`,
+      'error',
+      8000,
+    );
   }
 }
 

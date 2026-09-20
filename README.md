@@ -1,6 +1,12 @@
-# Immich Album Manager 0.4.0
+# Immich Album Manager 0.4.1
 
 Kleine Docker-Webapp für schnelle Albumverwaltung in einer dichten Listenansicht, angelehnt an die Immich-Albumübersicht.
+
+## Neu in 0.4.1
+
+- Archivstatus-Abfragen werden automatisch in Blöcke zu maximal 500 Alben aufgeteilt.
+- Die Blöcke werden nacheinander verarbeitet, damit große Bibliotheken Immich nicht mit parallelen Status-Scans überlasten.
+- Ein Fehler in einem Block stoppt nicht mehr die Statusermittlung aller übrigen Alben.
 
 ## Neu in 0.4.0
 
