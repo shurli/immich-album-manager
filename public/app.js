@@ -179,7 +179,7 @@ function renderAlbumRow(album) {
   targetButton.addEventListener('click', () => toggleTarget(album.id));
   targetCell.append(targetButton);
 
-  const thumb = makeThumbnail(album.albumThumbnailAssetId, 'album-thumb');
+  const thumb = makeAlbumThumbnail(album);
 
   const nameCell = document.createElement('div');
   nameCell.className = 'name-cell';
@@ -295,6 +295,18 @@ function renderItemCell(asset, fallbackDate, emptyLabel) {
   meta.append(date, file);
   cell.append(meta);
   return cell;
+}
+
+function makeAlbumThumbnail(album) {
+  const link = document.createElement('a');
+  link.className = 'album-thumb-link';
+  link.href = album.webUrl;
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  link.title = `${album.albumName} in Immich öffnen`;
+  link.setAttribute('aria-label', `${album.albumName} in Immich in neuem Tab öffnen`);
+  link.append(makeThumbnail(album.albumThumbnailAssetId, 'album-thumb'));
+  return link;
 }
 
 function makeThumbnail(assetId, className) {

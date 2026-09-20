@@ -6,9 +6,10 @@ import crypto from 'node:crypto';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 
-const APP_VERSION = '0.3.1';
+const APP_VERSION = '0.3.2';
 const PORT = Number(process.env.PORT || 3473);
 const IMMICH_URL = normalizeImmichUrl(process.env.IMMICH_URL || 'http://immich-server:2283');
+const IMMICH_PUBLIC_URL = normalizeImmichPublicUrl(process.env.IMMICH_PUBLIC_URL || process.env.IMMICH_URL || 'http://immich-server:2283');
 const IMMICH_API_KEY = process.env.IMMICH_API_KEY || '';
 const APP_USERNAME = process.env.APP_USERNAME || '';
 const APP_PASSWORD = process.env.APP_PASSWORD || '';
@@ -47,6 +48,7 @@ app.get('/api/status', async (_req, res, next) => {
       ok: true,
       version: APP_VERSION,
       immichUrl: redactUrl(IMMICH_URL),
+      immichPublicUrl: IMMICH_PUBLIC_URL,
       albumCount: Array.isArray(albums) ? albums.length : null,
     });
   } catch (error) {
@@ -176,11 +178,17 @@ app.use((error, _req, res, _next) => {
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Immich Album Manager v${APP_VERSION} listening on :${PORT}`);
   console.log(`Immich API: ${redactUrl(IMMICH_URL)}`);
+  console.log(`Immich Web: ${IMMICH_PUBLIC_URL}`);
 });
 
 function normalizeImmichUrl(input) {
   const trimmed = String(input).trim().replace(/\/+$/, '');
   return trimmed.endsWith('/api') ? trimmed : `${trimmed}/api`;
+}
+
+function normalizeImmichPublicUrl(input) {
+  const trimmed = String(input).trim().replace(/\/+$/, '');
+  return trimmed.endsWith('/api') ? trimmed.slice(0, -4) : trimmed;
 }
 
 function redactUrl(input) {
@@ -467,6 +475,7 @@ function toAlbumSummary(album = {}) {
     albumName: album.albumName || '',
     assetCount: Number(album.assetCount || 0),
     albumThumbnailAssetId: album.albumThumbnailAssetId || null,
+    webUrl: `${IMMICH_PUBLIC_URL}/albums/${album.id}`,
     createdAt: album.createdAt || null,
     updatedAt: album.updatedAt || null,
     startDate: album.startDate || null,

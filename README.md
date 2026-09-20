@@ -1,6 +1,11 @@
-# Immich Album Manager 0.3.0
+# Immich Album Manager 0.3.2
 
 Kleine Docker-Webapp für schnelle Albumverwaltung in einer dichten Listenansicht, angelehnt an die Immich-Albumübersicht.
+
+## Neu in 0.3.2
+
+- **Album in Immich öffnen:** Klick auf das Album-Thumbnail öffnet die originale Immich-Albumansicht in einem neuen Tab.
+- Neue optionale Variable `IMMICH_PUBLIC_URL` für die vom Browser erreichbare Immich-Adresse. Das ist wichtig, wenn `IMMICH_URL` nur innerhalb von Docker erreichbar ist.
 
 ## Neu in 0.3.0
 
@@ -63,7 +68,7 @@ Für alle Funktionen sollte der Immich API Key mindestens passende Rechte für f
 
 ```bash
 cp .env.example .env
-# IMMICH_URL und IMMICH_API_KEY in .env setzen
+# IMMICH_URL, IMMICH_PUBLIC_URL und IMMICH_API_KEY in .env setzen
 docker compose up -d --build
 ```
 
@@ -84,6 +89,14 @@ IMMICH_URL=http://host.docker.internal:2283
 ```
 
 `docker-compose.yml` enthält dafür unter Linux bereits `host-gateway`.
+
+Für den Thumbnail-Link zur Immich-Weboberfläche sollte zusätzlich eine vom Browser erreichbare URL gesetzt werden:
+
+```env
+IMMICH_PUBLIC_URL=https://photos.example.com
+```
+
+Ist `IMMICH_PUBLIC_URL` nicht gesetzt, wird sie aus `IMMICH_URL` abgeleitet. Bei internen Docker-Namen wie `immich_server` ist eine explizite öffentliche URL daher empfohlen.
 
 ## Performance
 
