@@ -1,14 +1,17 @@
 services:
   immich-album-manager:
-    build: .
+    image: ghcr.io/shurli/immich-album-manager:latest
     container_name: immich-album-manager
     restart: unless-stopped
     ports:
       - "3473:3473"
+    networks:
+      - immich 
+    restart: unless-stopped
     environment:
-      IMMICH_URL: ${IMMICH_URL:-http://host.docker.internal:2283}
+      IMMICH_URL: http://immich_server:2283
       IMMICH_PUBLIC_URL: ${IMMICH_PUBLIC_URL:-}
-      IMMICH_API_KEY: ${IMMICH_API_KEY}
+      IMMICH_API_KEY: ${ALBUM_IMMICH_API_KEY}
       APP_USERNAME: ${APP_USERNAME:-}
       APP_PASSWORD: ${APP_PASSWORD:-}
       REQUEST_TIMEOUT_MS: ${REQUEST_TIMEOUT_MS:-30000}
@@ -20,5 +23,8 @@ services:
       ARCHIVE_STATUS_CONCURRENCY: ${ARCHIVE_STATUS_CONCURRENCY:-4}
       ARCHIVE_STATUS_CACHE_TTL_MS: ${ARCHIVE_STATUS_CACHE_TTL_MS:-120000}
       ARCHIVE_CHUNK_SIZE: ${ARCHIVE_CHUNK_SIZE:-1000}
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+
+networks:
+  immich:
+    external: true
+    name: immich_default
