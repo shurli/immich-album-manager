@@ -1,6 +1,14 @@
-# Immich Album Manager 0.5.1
+# Immich Album Manager 0.5.2
 
 Kleine Docker-Webapp für schnelle Albumverwaltung in einer dichten Listenansicht, angelehnt an die Immich-Albumübersicht.
+
+## Neu in 0.5.2
+
+- Die Suche unterstützt optional reguläre Ausdrücke für Albumnamen im Format `/muster/flags`.
+- Beispiel: `/^urlaub.*2024$/i`.
+- Unterstützte Flags: `i`, `m`, `s`, `u`.
+- Normale Suchbegriffe funktionieren unverändert und durchsuchen weiterhin Albumname, Besitzer sowie die Dateinamen des neuesten und ältesten Items.
+- Ein kurzer Regex-Hinweis steht direkt unter der Suchleiste.
 
 ## Neu in 0.5.1
 

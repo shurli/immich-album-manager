@@ -45,7 +45,7 @@ loadAlbums();
 
 function bindControls() {
   elements.search.addEventListener('input', () => {
-    state.query = elements.search.value.trim().toLocaleLowerCase('de');
+    state.query = elements.search.value.trim();
     render();
   });
 
@@ -110,10 +110,20 @@ function render() {
 }
 
 function filteredAlbums() {
+  const query = state.query.trim();
+  const regex = parseRegexSearch(query);
+  const plainQuery = regex ? null : query.toLocaleLowerCase('de');
+
   const result = state.albums.filter((album) => {
-    if (!state.query) return true;
+    if (!query) return true;
+
+    if (regex) {
+      regex.lastIndex = 0;
+      return regex.test(album.albumName || '');
+    }
+
     const haystack = `${album.albumName} ${album.ownerName || ''} ${album.newestAsset?.fileName || ''} ${album.oldestAsset?.fileName || ''}`.toLocaleLowerCase('de');
-    return haystack.includes(state.query);
+    return haystack.includes(plainQuery);
   });
 
   const collator = new Intl.Collator('de', { numeric: true, sensitivity: 'base' });
@@ -130,6 +140,25 @@ function filteredAlbums() {
       default: return collator.compare(a.albumName, b.albumName);
     }
   });
+}
+
+function parseRegexSearch(query) {
+  if (!query.startsWith('/')) return null;
+
+  const lastSlash = query.lastIndexOf('/');
+  if (lastSlash <= 0) return null;
+
+  const pattern = query.slice(1, lastSlash);
+  const flags = query.slice(lastSlash + 1);
+
+  // g/y are deliberately omitted because RegExp.test would otherwise be stateful across albums.
+  if (!/^[imsu]*$/.test(flags)) return null;
+
+  try {
+    return new RegExp(pattern, flags);
+  } catch {
+    return null;
+  }
 }
 
 function updateMergeUi(visibleAlbums) {

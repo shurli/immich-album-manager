@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
     <title>Immich Album Manager</title>
-    <link rel="stylesheet" href="/assets/styles.css?v=0.5.1" />
+    <link rel="stylesheet" href="/assets/styles.css?v=0.5.2" />
   </head>
   <body>
     <header class="topbar">
@@ -13,7 +13,7 @@
         <div class="brand-mark" aria-hidden="true">✦</div>
         <div>
           <h1>Alben</h1>
-          <p>Immich Album Manager v0.5.1</p>
+          <p>Immich Album Manager v0.5.2</p>
         </div>
       </div>
       <button id="refreshButton" class="icon-button" title="Neu laden" aria-label="Neu laden">↻</button>
@@ -21,10 +21,13 @@
 
     <main>
       <section class="controls" aria-label="Albumfilter">
-        <label class="search-box">
-          <span aria-hidden="true">⌕</span>
-          <input id="searchInput" type="search" autocomplete="off" placeholder="Alben suchen …" />
-        </label>
+        <div class="search-control">
+          <label class="search-box">
+            <span aria-hidden="true">⌕</span>
+            <input id="searchInput" type="search" autocomplete="off" placeholder="Alben suchen …" />
+          </label>
+          <span class="search-help">Regex für Albumnamen: <code>/muster/flags</code>, z. B. <code>/^urlaub.*2024$/i</code></span>
+        </div>
         <select id="scopeSelect" title="Albumumfang">
           <option value="all">Alle Alben</option>
           <option value="owned">Eigene Alben</option>
@@ -99,6 +102,6 @@
     </main>
 
     <div id="toastStack" class="toast-stack" aria-live="assertive"></div>
-    <script type="module" src="/assets/app.js?v=0.5.1"></script>
+    <script type="module" src="/assets/app.js?v=0.5.2"></script>
   </body>
 </html>
