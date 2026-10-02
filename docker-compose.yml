@@ -3,11 +3,12 @@ services:
     container_name: immich-album-manager
     image: ghcr.io/shurli/immich-album-manager:latest
     ports:
-      - "3473:3473"
+      - "${PORT:-3473}:${PORT:-3473}"
     networks:
       - immich 
     restart: unless-stopped
     environment:
+      PORT: ${PORT:-3473}
       IMMICH_URL: http://immich_server:2283
       IMMICH_PUBLIC_URL: ${IMMICH_PUBLIC_URL:-}
       IMMICH_API_KEY: ${IMMICH_API_KEY}

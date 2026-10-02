@@ -1,6 +1,12 @@
-# Immich Album Manager 0.5.0
+# Immich Album Manager 0.5.1
 
 Kleine Docker-Webapp für schnelle Albumverwaltung in einer dichten Listenansicht, angelehnt an die Immich-Albumübersicht.
+
+## Neu in 0.5.1
+
+- Der Web-App-Port ist über `PORT` konfigurierbar.
+- Docker Compose verwendet denselben Port für Host-Mapping und Container-Port.
+- Der Docker-Healthcheck verwendet ebenfalls den konfigurierten Port.
 
 ## Neu in 0.5.0
 
@@ -89,17 +95,18 @@ Für alle Funktionen sollte der Immich API Key mindestens passende Rechte für f
 
 ```bash
 cp .env.example .env
-# IMMICH_URL, IMMICH_PUBLIC_URL und IMMICH_API_KEY in .env setzen
+# PORT, IMMICH_URL, IMMICH_PUBLIC_URL und IMMICH_API_KEY in .env setzen
 docker compose up -d --build
 ```
 
-Danach: `http://<docker-host>:3473`
+Danach: `http://<docker-host>:<PORT>` (standardmäßig `http://<docker-host>:3473`)
 
 ### Wenn Immich im selben Docker-Compose läuft
 
 Am saubersten beide Services in dasselbe Docker-Netz hängen und z. B. verwenden:
 
 ```env
+PORT=3473
 IMMICH_URL=http://immich_server:2283
 ```
 
