@@ -1,8 +1,7 @@
 services:
   immich-album-manager:
-    image: ghcr.io/shurli/immich-album-manager:latest
     container_name: immich-album-manager
-    restart: unless-stopped
+    image: ghcr.io/shurli/immich-album-manager:latest
     ports:
       - "3473:3473"
     networks:
@@ -11,7 +10,7 @@ services:
     environment:
       IMMICH_URL: http://immich_server:2283
       IMMICH_PUBLIC_URL: ${IMMICH_PUBLIC_URL:-}
-      IMMICH_API_KEY: ${ALBUM_IMMICH_API_KEY}
+      IMMICH_API_KEY: ${IMMICH_API_KEY}
       APP_USERNAME: ${APP_USERNAME:-}
       APP_PASSWORD: ${APP_PASSWORD:-}
       REQUEST_TIMEOUT_MS: ${REQUEST_TIMEOUT_MS:-30000}
