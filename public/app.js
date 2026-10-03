@@ -108,11 +108,66 @@ function reconcileMergeSelection() {
 }
 
 function render() {
+  const viewport = captureRenderViewport();
   const albums = filteredAlbums();
   elements.count.textContent = `${albums.length} ${albums.length === 1 ? 'Album' : 'Alben'}`;
   elements.empty.hidden = albums.length !== 0;
   updateMergeUi(albums);
   elements.rows.replaceChildren(...albums.map(renderAlbumRow));
+  restoreRenderViewport(viewport);
+}
+
+function captureRenderViewport() {
+  const tableScroll = document.querySelector('.table-scroll');
+  const active = document.activeElement;
+  const activeRow = active?.closest?.('.album-row') || null;
+  const rows = [...elements.rows.querySelectorAll('.album-row')];
+
+  const anchorRow = activeRow || rows.find((row) => {
+    const rect = row.getBoundingClientRect();
+    return rect.bottom > 76 && rect.top < window.innerHeight;
+  }) || null;
+
+  let focusSelector = null;
+  if (activeRow && active instanceof HTMLElement) {
+    if (active.classList.contains('source-check')) focusSelector = '.source-check';
+    else if (active.classList.contains('target-selector')) focusSelector = '.target-selector';
+    else if (active.classList.contains('inline-name')) focusSelector = '.inline-name';
+    else if (active.classList.contains('archive-toggle')) focusSelector = '.archive-toggle';
+    else if (active.classList.contains('tag-button')) focusSelector = '.tag-button';
+  }
+
+  return {
+    windowY: window.scrollY,
+    tableScrollLeft: tableScroll?.scrollLeft || 0,
+    anchorId: anchorRow?.dataset.id || null,
+    anchorTop: anchorRow?.getBoundingClientRect().top ?? null,
+    focusSelector,
+  };
+}
+
+function restoreRenderViewport(viewport) {
+  const tableScroll = document.querySelector('.table-scroll');
+  if (tableScroll) tableScroll.scrollLeft = viewport.tableScrollLeft;
+
+  let restoredByAnchor = false;
+  if (viewport.anchorId && viewport.anchorTop !== null) {
+    const row = elements.rows.querySelector(`[data-id="${CSS.escape(viewport.anchorId)}"]`);
+    if (row) {
+      const delta = row.getBoundingClientRect().top - viewport.anchorTop;
+      if (Math.abs(delta) > 0.5) window.scrollBy(0, delta);
+      restoredByAnchor = true;
+
+      if (viewport.focusSelector) {
+        const focusTarget = row.querySelector(viewport.focusSelector);
+        focusTarget?.focus({ preventScroll: true });
+      }
+    }
+  }
+
+  if (!restoredByAnchor && Math.abs(window.scrollY - viewport.windowY) > 0.5) {
+    window.scrollTo({ top: viewport.windowY, left: window.scrollX, behavior: 'auto' });
+  }
 }
 
 function filteredAlbums() {

@@ -1,6 +1,13 @@
-# Immich Album Manager 0.6.0
+# Immich Album Manager 0.6.1
 
 Kleine Docker-Webapp für schnelle Albumverwaltung in einer dichten Listenansicht, angelehnt an die Immich-Albumübersicht.
+
+## Neu in 0.6.1
+
+- Die Albumliste behält bei UI-Aktualisierungen ihre sichtbare Position.
+- Beim Markieren von Quellen/Zielen bleibt die gerade bearbeitete Albumzeile an derselben Stelle, auch wenn der Merge-Balken ein- oder ausgeblendet wird.
+- Asynchron nachgeladene Statusdaten verursachen keinen Sprung mehr nach oben.
+- Der horizontale Tabellen-Scroll und der Fokus auf Checkbox/Buttons werden ebenfalls erhalten.
 
 ## Neu in 0.6.0
 

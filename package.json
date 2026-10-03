@@ -1,6 +1,6 @@
 {
   "name": "immich-album-manager",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "private": true,
   "type": "module",
   "description": "Immich album manager with merge, bulk delete, lazy album tags, archive toggle, and rename suggestions",
