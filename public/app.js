@@ -348,28 +348,41 @@ async function deleteSelectedSources() {
   for (const id of sourceIds) state.busy.add(id);
   render();
 
+  const deletedIds = [];
+  const failures = [];
+
   try {
-    const result = await api('/api/albums/delete-many', {
-      method: 'POST',
-      headers: actionHeaders,
-      body: JSON.stringify({ albumIds: sourceIds }),
-    });
+    for (let offset = 0; offset < sourceIds.length; offset += 500) {
+      const batch = sourceIds.slice(offset, offset + 500);
+      const result = await api('/api/albums/delete-many', {
+        method: 'POST',
+        headers: actionHeaders,
+        body: JSON.stringify({ albumIds: batch }),
+      });
 
-    for (const id of result.deletedIds || []) state.mergeSources.delete(id);
+      deletedIds.push(...(result.deletedIds || []));
+      failures.push(...(result.failures || []));
+      for (const id of result.deletedIds || []) state.mergeSources.delete(id);
+    }
 
-    if ((result.failures || []).length > 0) {
+    if (failures.length > 0) {
       showToast(
-        `${numberFormatter.format(result.deletedIds?.length || 0)} Album/Alben gelöscht; ${result.failures.length} konnten nicht gelöscht werden.`,
+        `${numberFormatter.format(deletedIds.length)} Album/Alben gelöscht; ${numberFormatter.format(failures.length)} konnten nicht gelöscht werden.`,
         'error',
         9000,
       );
     } else {
-      showToast(`${numberFormatter.format(result.deletedIds?.length || 0)} markierte Album/Alben gelöscht.`, 'success', 6000);
+      showToast(`${numberFormatter.format(deletedIds.length)} markierte Album/Alben gelöscht.`, 'success', 6000);
     }
 
     await loadAlbums();
   } catch (error) {
-    showToast(error.message, 'error', 9000);
+    showToast(
+      `Löschen abgebrochen: ${numberFormatter.format(deletedIds.length)} Album/Alben wurden bereits gelöscht. ${error.message}`,
+      'error',
+      10000,
+    );
+    await loadAlbums();
   } finally {
     state.merging = false;
     state.mergeOperation = null;
