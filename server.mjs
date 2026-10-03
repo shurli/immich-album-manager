@@ -6,7 +6,7 @@ import crypto from 'node:crypto';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 
-const APP_VERSION = '0.5.2';
+const APP_VERSION = '0.6.0';
 const PORT = Number(process.env.PORT || 3473);
 const IMMICH_URL = normalizeImmichUrl(process.env.IMMICH_URL || 'http://immich-server:2283');
 const IMMICH_PUBLIC_URL = normalizeImmichPublicUrl(process.env.IMMICH_PUBLIC_URL || process.env.IMMICH_URL || 'http://immich-server:2283');
@@ -22,8 +22,12 @@ const EXTREMA_CACHE_TTL_MS = clamp(Number(process.env.EXTREMA_CACHE_TTL_MS || 12
 const ARCHIVE_STATUS_CONCURRENCY = clamp(Number(process.env.ARCHIVE_STATUS_CONCURRENCY || 4), 1, 12);
 const ARCHIVE_STATUS_CACHE_TTL_MS = clamp(Number(process.env.ARCHIVE_STATUS_CACHE_TTL_MS || 120000), 0, 3600000);
 const ARCHIVE_CHUNK_SIZE = clamp(Number(process.env.ARCHIVE_CHUNK_SIZE || 1000), 1, 5000);
+const TAG_SCAN_CONCURRENCY = clamp(Number(process.env.TAG_SCAN_CONCURRENCY || 8), 1, 20);
+const TAG_CACHE_TTL_MS = clamp(Number(process.env.TAG_CACHE_TTL_MS || 120000), 0, 3600000);
 const extremaCache = new Map();
 const archiveStatusCache = new Map();
+const albumTagCache = new Map();
+let tagListCache = { value: null, expiresAt: 0 };
 
 if (!IMMICH_API_KEY) {
   console.warn('[config] IMMICH_API_KEY is empty. API calls will fail until it is configured.');
@@ -180,6 +184,45 @@ app.post('/api/albums/:id/archive-toggle', requireActionHeader, async (req, res,
   }
 });
 
+app.get('/api/albums/:id/tags', async (req, res, next) => {
+  try {
+    const id = requireUuid(req.params.id, 'album id');
+    const result = await getAlbumTags(id);
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/albums/delete-many', requireActionHeader, async (req, res, next) => {
+  try {
+    const rawIds = Array.isArray(req.body?.albumIds) ? req.body.albumIds : [];
+    if (rawIds.length < 1) return res.status(400).json({ error: 'Mindestens ein Album auswählen.' });
+    if (rawIds.length > 500) return res.status(400).json({ error: 'Zu viele Alben auf einmal (maximal 500).' });
+
+    const albumIds = [...new Set(rawIds.map((id) => requireUuid(id, 'album id')))];
+    const results = await mapConcurrent(albumIds, 6, async (id) => {
+      try {
+        await immichJson(`/albums/${id}`, { method: 'DELETE' });
+        extremaCache.delete(id);
+        archiveStatusCache.delete(id);
+        albumTagCache.delete(id);
+        return { id, ok: true };
+      } catch (error) {
+        return { id, ok: false, error: error?.message || 'Löschen fehlgeschlagen' };
+      }
+    });
+
+    res.json({
+      ok: results.every((item) => item.ok),
+      deletedIds: results.filter((item) => item.ok).map((item) => item.id),
+      failures: results.filter((item) => !item.ok),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get('/api/thumbnail/:assetId', async (req, res, next) => {
   try {
     const assetId = requireUuid(req.params.assetId, 'assetId');
@@ -220,6 +263,7 @@ app.delete('/api/albums/:id', requireActionHeader, async (req, res, next) => {
     await immichJson(`/albums/${id}`, { method: 'DELETE' });
     extremaCache.delete(id);
     archiveStatusCache.delete(id);
+    albumTagCache.delete(id);
     res.status(204).end();
   } catch (error) {
     next(error);
@@ -484,10 +528,12 @@ async function mergeAlbums(sourceIds, targetId) {
     await immichJson(`/albums/${sourceId}`, { method: 'DELETE' });
     extremaCache.delete(sourceId);
     archiveStatusCache.delete(sourceId);
+    albumTagCache.delete(sourceId);
     return sourceId;
   }));
   extremaCache.delete(targetId);
   archiveStatusCache.delete(targetId);
+  albumTagCache.delete(targetId);
 
   const cleanupFailures = deleteResults
     .map((result, index) => ({ result, id: sourceIds[index], name: sourceAlbums[index]?.albumName || sourceIds[index] }))
@@ -511,6 +557,63 @@ async function mergeAlbums(sourceIds, targetId) {
     alreadyPresent: Math.max(duplicates, uniqueAssetIds.length - newlyAdded),
     deletedSourceCount: sourceIds.length - cleanupFailures.length,
   };
+}
+
+async function getAlbumTags(albumId) {
+  const cached = albumTagCache.get(albumId);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+
+  const album = await immichJson(`/albums/${albumId}`);
+  const assetCount = Number(album?.assetCount || 0);
+  if (assetCount < 1) {
+    const value = { albumId, assetCount: 0, tags: [] };
+    if (TAG_CACHE_TTL_MS > 0) albumTagCache.set(albumId, { value, expiresAt: Date.now() + TAG_CACHE_TTL_MS });
+    return value;
+  }
+
+  const allTags = await getAllTagsCached();
+  const matches = await mapConcurrent(allTags, TAG_SCAN_CONCURRENCY, async (tag) => {
+    const data = await immichJson('/search/metadata', {
+      method: 'POST',
+      body: JSON.stringify({
+        albumIds: [albumId],
+        tagIds: [tag.id],
+        page: 1,
+        size: 1,
+        withExif: false,
+        withPeople: false,
+        withStacked: false,
+      }),
+    });
+    const container = data?.assets || data || {};
+    const items = Array.isArray(container.items) ? container.items : Array.isArray(data?.items) ? data.items : [];
+    if (items.length === 0) return null;
+    return {
+      id: tag.id,
+      value: tag.value || '',
+      color: tag.color || null,
+      parentId: tag.parentId || null,
+    };
+  });
+
+  const tags = matches
+    .filter(Boolean)
+    .sort((a, b) => String(a.value).localeCompare(String(b.value), 'de', { numeric: true, sensitivity: 'base' }));
+
+  const value = { albumId, assetCount, tags };
+  if (TAG_CACHE_TTL_MS > 0) albumTagCache.set(albumId, { value, expiresAt: Date.now() + TAG_CACHE_TTL_MS });
+  return value;
+}
+
+async function getAllTagsCached() {
+  if (tagListCache.value && tagListCache.expiresAt > Date.now()) return tagListCache.value;
+  const tags = await immichJson('/tags');
+  const value = Array.isArray(tags) ? tags : [];
+  tagListCache = {
+    value,
+    expiresAt: TAG_CACHE_TTL_MS > 0 ? Date.now() + TAG_CACHE_TTL_MS : 0,
+  };
+  return value;
 }
 
 async function getAlbumArchiveStatus(albumId, expectedCount) {

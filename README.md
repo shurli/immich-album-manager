@@ -1,6 +1,13 @@
-# Immich Album Manager 0.5.2
+# Immich Album Manager 0.6.0
 
 Kleine Docker-Webapp für schnelle Albumverwaltung in einer dichten Listenansicht, angelehnt an die Immich-Albumübersicht.
+
+## Neu in 0.6.0
+
+- In der Merge-Leiste können die aktuell als **Quelle** markierten Alben direkt über **Markierte löschen** gelöscht werden.
+- Neben der Album-ID gibt es ein **Tag-Icon**. Beim Hover oder Tastatur-Fokus werden die Tags der Assets dieses Albums dynamisch nachgeladen.
+- Die Tag-Liste wird pro Album kurz gecacht und als kompakte Tag-Chips angezeigt.
+- Für die Tag-Abfrage werden Immichs Tag-Liste und die Asset-Suche mit `tagIds` verwendet.
 
 ## Neu in 0.5.2
 
@@ -98,6 +105,7 @@ Für alle Funktionen sollte der Immich API Key mindestens passende Rechte für f
 - Assets teilen, soweit von Immich beim Hinzufügen zu einem Album verlangt
 - Asset-Thumbnail ansehen
 - Assets ändern / `AssetUpdate` (für Archivieren und Entarchivieren)
+- Tags lesen / `TagRead` (für die Tag-Anzeige)
 
 ## Start
 
@@ -145,9 +153,11 @@ EXTREMA_CACHE_TTL_MS=120000
 ARCHIVE_STATUS_CONCURRENCY=4
 ARCHIVE_STATUS_CACHE_TTL_MS=120000
 ARCHIVE_CHUNK_SIZE=1000
+TAG_SCAN_CONCURRENCY=8
+TAG_CACHE_TTL_MS=120000
 ```
 
-`MERGE_SOURCE_CONCURRENCY` begrenzt, wie viele Quellalben beim Einlesen eines Multi-Merge gleichzeitig abgefragt werden. `EXTREMA_CONCURRENCY` begrenzt die parallelen Rand-Item-Abfragen der Listenansicht. `ARCHIVE_STATUS_CONCURRENCY` begrenzt die parallelen Album-Scans für den Archivstatus; `ARCHIVE_STATUS_CACHE_TTL_MS` cached diese Ergebnisse. `ARCHIVE_CHUNK_SIZE` bestimmt die Batchgröße beim Archivieren/Entarchivieren.
+`MERGE_SOURCE_CONCURRENCY` begrenzt, wie viele Quellalben beim Einlesen eines Multi-Merge gleichzeitig abgefragt werden. `EXTREMA_CONCURRENCY` begrenzt die parallelen Rand-Item-Abfragen der Listenansicht. `ARCHIVE_STATUS_CONCURRENCY` begrenzt die parallelen Album-Scans für den Archivstatus; `ARCHIVE_STATUS_CACHE_TTL_MS` cached diese Ergebnisse. `ARCHIVE_CHUNK_SIZE` bestimmt die Batchgröße beim Archivieren/Entarchivieren. `TAG_SCAN_CONCURRENCY` begrenzt die parallelen Tag-Prüfungen beim Hover; `TAG_CACHE_TTL_MS` bestimmt die Cache-Dauer.
 
 ## Sicherheit
 

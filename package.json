@@ -1,9 +1,9 @@
 {
   "name": "immich-album-manager",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "private": true,
   "type": "module",
-  "description": "Immich album manager with inline rename suggestions, merge, archive toggle, and bulk workflows",
+  "description": "Immich album manager with merge, bulk delete, lazy album tags, archive toggle, and rename suggestions",
   "scripts": {
     "start": "node server.mjs",
     "check": "node --check server.mjs && node --check public/app.js"

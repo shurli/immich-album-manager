@@ -7,6 +7,7 @@ const state = {
   mergeSources: new Set(),
   mergeTarget: null,
   merging: false,
+  mergeOperation: null,
   archiveBusy: new Set(),
   archiveStatusRequest: 0,
 };
@@ -27,6 +28,7 @@ const elements = {
   mergeAssetCount: document.querySelector('#mergeAssetCount'),
   mergeTargetName: document.querySelector('#mergeTargetName'),
   mergeRun: document.querySelector('#mergeRunButton'),
+  mergeDelete: document.querySelector('#mergeDeleteButton'),
   mergeClear: document.querySelector('#mergeClearButton'),
 };
 
@@ -62,6 +64,7 @@ function bindControls() {
   elements.refresh.addEventListener('click', loadAlbums);
   elements.selectAllSources.addEventListener('change', toggleAllVisibleSources);
   elements.mergeClear.addEventListener('click', clearMergeSelection);
+  elements.mergeDelete.addEventListener('click', deleteSelectedSources);
   elements.mergeRun.addEventListener('click', runMultiMerge);
 }
 
@@ -76,6 +79,9 @@ async function loadAlbums() {
       album.archiveStatus = album.assetCount > 0
         ? { state: 'loading', assetCount: album.assetCount, archivedCount: 0, accessibleCount: 0, missingCount: 0 }
         : { state: 'empty', assetCount: 0, archivedCount: 0, accessibleCount: 0, missingCount: 0 };
+      album.assetTags = null;
+      album.assetTagsState = album.assetCount > 0 ? 'idle' : 'loaded';
+      album.assetTagsError = null;
     }
     state.albums = albums;
     reconcileMergeSelection();
@@ -173,7 +179,9 @@ function updateMergeUi(visibleAlbums) {
   elements.mergeTargetName.textContent = target ? target.albumName : 'Ziel noch wählen';
   elements.mergeTargetName.classList.toggle('missing', !target);
   elements.mergeRun.disabled = state.merging || sources.length === 0 || !target;
-  elements.mergeRun.textContent = state.merging ? 'Merge läuft …' : `Merge starten`;
+  elements.mergeRun.textContent = state.merging && state.mergeOperation === 'merge' ? 'Merge läuft …' : 'Merge starten';
+  elements.mergeDelete.disabled = state.merging || sources.length === 0;
+  elements.mergeDelete.textContent = state.merging && state.mergeOperation === 'delete' ? 'Lösche …' : 'Markierte löschen';
   elements.mergeClear.disabled = state.merging;
 
   const selectableVisible = visibleAlbums.filter((album) => album.id !== state.mergeTarget);
@@ -250,7 +258,10 @@ function renderAlbumRow(album) {
   const sub = document.createElement('span');
   sub.className = 'subtle mono';
   sub.textContent = album.id.slice(0, 8);
-  nameCell.append(input, sub, suggestions);
+  const metaRow = document.createElement('div');
+  metaRow.className = 'name-meta-row';
+  metaRow.append(sub, renderTagControl(album));
+  nameCell.append(input, metaRow, suggestions);
 
   const count = document.createElement('div');
   count.className = 'asset-count';
@@ -326,6 +337,45 @@ function clearMergeSelection() {
   state.mergeSources.clear();
   state.mergeTarget = null;
   render();
+}
+
+async function deleteSelectedSources() {
+  if (state.merging || state.mergeSources.size === 0) return;
+
+  const sourceIds = [...state.mergeSources];
+  state.merging = true;
+  state.mergeOperation = 'delete';
+  for (const id of sourceIds) state.busy.add(id);
+  render();
+
+  try {
+    const result = await api('/api/albums/delete-many', {
+      method: 'POST',
+      headers: actionHeaders,
+      body: JSON.stringify({ albumIds: sourceIds }),
+    });
+
+    for (const id of result.deletedIds || []) state.mergeSources.delete(id);
+
+    if ((result.failures || []).length > 0) {
+      showToast(
+        `${numberFormatter.format(result.deletedIds?.length || 0)} Album/Alben gelöscht; ${result.failures.length} konnten nicht gelöscht werden.`,
+        'error',
+        9000,
+      );
+    } else {
+      showToast(`${numberFormatter.format(result.deletedIds?.length || 0)} markierte Album/Alben gelöscht.`, 'success', 6000);
+    }
+
+    await loadAlbums();
+  } catch (error) {
+    showToast(error.message, 'error', 9000);
+  } finally {
+    state.merging = false;
+    state.mergeOperation = null;
+    for (const id of sourceIds) state.busy.delete(id);
+    render();
+  }
 }
 
 function updateNameSuggestions(album, input, container) {
@@ -411,6 +461,7 @@ async function mergeSuggestedAlbum(sourceAlbum, targetAlbum, suggestions) {
 
   suggestions.hidden = true;
   state.merging = true;
+  state.mergeOperation = 'merge';
   state.busy.add(sourceAlbum.id);
   state.busy.add(targetAlbum.id);
   render();
@@ -445,10 +496,120 @@ async function mergeSuggestedAlbum(sourceAlbum, targetAlbum, suggestions) {
     showToast(error.message, 'error', 10000);
   } finally {
     state.merging = false;
+    state.mergeOperation = null;
     state.busy.delete(sourceAlbum.id);
     state.busy.delete(targetAlbum.id);
     render();
   }
+}
+
+function renderTagControl(album) {
+  const wrapper = document.createElement('span');
+  wrapper.className = 'tag-control';
+
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'tag-button';
+  button.textContent = '🏷';
+  button.title = 'Tags der Assets anzeigen';
+  button.setAttribute('aria-label', `Tags in ${album.albumName} anzeigen`);
+
+  const popover = document.createElement('div');
+  popover.className = 'tag-popover';
+  popover.hidden = true;
+
+  const show = () => {
+    popover.hidden = false;
+    renderTagPopover(album, popover);
+    if (album.assetTagsState === 'idle') void loadAlbumTags(album, popover);
+  };
+  const hide = () => {
+    popover.hidden = true;
+  };
+
+  wrapper.addEventListener('mouseenter', show);
+  wrapper.addEventListener('mouseleave', hide);
+  button.addEventListener('focus', show);
+  button.addEventListener('blur', () => window.setTimeout(hide, 100));
+
+  wrapper.append(button, popover);
+  return wrapper;
+}
+
+function renderTagPopover(album, popover) {
+  popover.replaceChildren();
+
+  const title = document.createElement('strong');
+  title.className = 'tag-popover-title';
+  title.textContent = 'Tags im Album';
+  popover.append(title);
+
+  if (album.assetTagsState === 'loading') {
+    const loading = document.createElement('span');
+    loading.className = 'tag-popover-message';
+    loading.textContent = 'Lade Tags …';
+    popover.append(loading);
+    return;
+  }
+
+  if (album.assetTagsState === 'error') {
+    const error = document.createElement('span');
+    error.className = 'tag-popover-message error';
+    error.textContent = album.assetTagsError || 'Tags konnten nicht geladen werden.';
+    popover.append(error);
+    return;
+  }
+
+  const tags = Array.isArray(album.assetTags) ? album.assetTags : [];
+  if (tags.length === 0) {
+    const empty = document.createElement('span');
+    empty.className = 'tag-popover-message';
+    empty.textContent = album.assetCount > 0 ? 'Keine Tags gefunden.' : 'Album ist leer.';
+    popover.append(empty);
+    return;
+  }
+
+  const summary = document.createElement('span');
+  summary.className = 'tag-popover-summary';
+  summary.textContent = `${tags.length} ${tags.length === 1 ? 'Tag' : 'Tags'}`;
+
+  const list = document.createElement('div');
+  list.className = 'tag-chip-list';
+  for (const tag of tags) {
+    const chip = document.createElement('span');
+    chip.className = 'tag-chip';
+    if (tag.color) {
+      const dot = document.createElement('span');
+      dot.className = 'tag-color';
+      dot.style.backgroundColor = tag.color;
+      chip.append(dot);
+    }
+    const label = document.createElement('span');
+    label.textContent = tag.value || '(ohne Namen)';
+    chip.append(label);
+    list.append(chip);
+  }
+
+  popover.append(summary, list);
+}
+
+async function loadAlbumTags(album, popover) {
+  if (album.assetTagsState === 'loading' || album.assetTagsState === 'loaded') return;
+
+  album.assetTagsState = 'loading';
+  renderTagPopover(album, popover);
+  try {
+    const result = await api(`/api/albums/${album.id}/tags`);
+    album.assetTags = Array.isArray(result.tags) ? result.tags : [];
+    album.assetTagsState = 'loaded';
+    album.assetTagsError = null;
+  } catch (error) {
+    album.assetTags = [];
+    album.assetTagsState = 'error';
+    album.assetTagsError = error.message;
+  }
+
+  if (popover.isConnected && !popover.hidden) renderTagPopover(album, popover);
 }
 
 async function loadArchiveStatuses(albums, requestId) {
@@ -680,6 +841,7 @@ async function runMultiMerge() {
   if (!target) return;
 
   state.merging = true;
+  state.mergeOperation = 'merge';
   for (const id of sourceIds) state.busy.add(id);
   state.busy.add(targetId);
   render();
@@ -705,6 +867,7 @@ async function runMultiMerge() {
     showToast(error.message, 'error', 10000);
   } finally {
     state.merging = false;
+    state.mergeOperation = null;
     for (const id of sourceIds) state.busy.delete(id);
     state.busy.delete(targetId);
     render();
